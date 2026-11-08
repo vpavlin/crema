@@ -26,8 +26,8 @@ No server, no website. Two apps at parity on one wire contract, both on Loam:
 
 | Part | Status |
 |---|---|
-| `packages/protocol` - stamps, signed catalog, player claims, geofence, leaderboard (JS reference, `npm test`) | done |
-| `packages/engine` - the event log (loam-sync) and the fold: catalog, claims, profiles → passport + leaderboard | next |
+| `packages/protocol` - the café's rotating stamp, the signed catalog, geofence, join link (JS reference; `cd packages && npm test`) | done |
+| `packages/engine` - the event log (loam-sync): sealed per-event topic, signed stamps/profiles, catalog versions, RBSR catch-up, the fold → passport + leaderboard | done |
 | `mobile/` - Android (Expo, loam-transport): join an event by QR, map, scan + GPS check, passport, live leaderboard, café mode | planned |
 | `crema_core` + `module/` - Basecamp (C++ on loam_core + QML): organizer studio, café mode, big-screen leaderboard | planned |
 | e-ink café display (ESP32 + e-paper) | later |

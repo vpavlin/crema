@@ -1,0 +1,10 @@
+{
+  "name": "crema-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Crema coffee passport: the protocol (stamps, signed catalog) and the engine (loam-sync event log, fold, catch-up). Shared by the Android app; crema_core matches it in C++.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": { "test": "node --test protocol/test/*.test.js engine/test/*.test.js" },
+  "dependencies": { "@noble/curves": "2.3.0", "@noble/hashes": "2.4.0", "@noble/ciphers": "2.4.0" }
+}

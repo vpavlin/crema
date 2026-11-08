@@ -1,17 +1,16 @@
-// Crema protocol: a coffee passport you can't fake from your sofa.
+// Crema protocol: the parts that are Crema's own - the café's rotating stamp, the organizer's signed
+// catalog, the geofence and the join link. The event log, player signatures, sealing and catch-up
+// come from loam-sync (packages/loam-sync); the engine (packages/engine) puts them together.
 //
 // - A café's display shows a QR that changes every STEP_S seconds: an Ed25519 signature by the
 //   café's key over (café id, time step). Only the display can make it; anyone can check it with the
-//   café's public key from the event's signed catalog. No server needed to verify.
-// - The organizer signs the event catalog (cafés, their public keys and places, the event window).
-// - A player turns a scanned QR into a claim signed with their own secp256k1 identity (the Loam /
-//   Keycard curve). Claims are what the leaderboard counts: distinct cafés per player per event.
+//   café's public key from the organizer-signed catalog. No server needed to verify.
 // - The GPS check runs on the player's phone only; the position is never published.
-import { ed25519 } from "@noble/curves/ed25519";
-import { secp256k1 } from "@noble/curves/secp256k1";
-import { sha256 } from "@noble/hashes/sha256";
-import { bytesToHex, hexToBytes, utf8ToBytes, randomBytes } from "@noble/hashes/utils";
+// crema_core (C++) implements the same bytes; test/vectors.json pins them.
+import { ed25519 } from "@noble/curves/ed25519.js";
+import { bytesToHex, hexToBytes, utf8ToBytes, randomBytes } from "@noble/hashes/utils.js";
 
+export const DOMAIN = "crema";
 export const STEP_S = 30;            // how long one QR is valid
 export const SKEW_STEPS = 1;         // accept the previous/next step too (clock drift, slow scans)
 export const QR_PREFIX = "CREMA1";
@@ -42,28 +41,26 @@ export function unb64url(s) {
   }
   return new Uint8Array(out);
 }
-// Deterministic JSON: sorted keys, no undefined (what gets signed must be byte-identical everywhere)
+// Deterministic JSON: sorted keys, undefined dropped. Signed data uses only strings, integers,
+// booleans, arrays and objects (no floats - coordinates are microdegrees), so C++ matches it.
 export function canonical(v) {
   if (v === null || typeof v !== "object") return JSON.stringify(v);
   if (Array.isArray(v)) return "[" + v.map(canonical).join(",") + "]";
   return "{" + Object.keys(v).filter((k) => v[k] !== undefined).sort().map((k) => JSON.stringify(k) + ":" + canonical(v[k])).join(",") + "}";
 }
 
-// ── keys ──
-export function newCafeKey() {
-  const sk = ed25519.utils.randomPrivateKey();
+// ── keys (cafés and organizers: Ed25519) ──
+export function newKey() {
+  const sk = ed25519.utils.randomSecretKey();
   return { secretKey: bytesToHex(sk), publicKey: bytesToHex(ed25519.getPublicKey(sk)) };
 }
-export const newOrganizerKey = newCafeKey;
-export function newPlayerKey() {
-  const sk = secp256k1.utils.randomPrivateKey();
-  return { secretKey: bytesToHex(sk), publicKey: bytesToHex(secp256k1.getPublicKey(sk, true)) };
-}
+export const publicKeyOf = (secretHex) => bytesToHex(ed25519.getPublicKey(hexToBytes(secretHex)));
 
 // ── the café's rotating stamp ──
 export const stepOf = (nowMs) => Math.floor(nowMs / 1000 / STEP_S);
+export const stepTimeMs = (step) => step * STEP_S * 1000;
 const stampMessage = (cafeId, step) => utf8ToBytes(`crema/stamp/v1|${cafeId}|${step}`);
-const CAFE_ID = /^[a-z0-9-]{1,40}$/;
+export const CAFE_ID = /^[a-z0-9-]{1,40}$/;
 
 // What the display shows: CREMA1.<cafeId>.<step base36>.<sig b64url>
 export function makeStamp(cafeId, cafeSecretHex, nowMs = Date.now()) {
@@ -85,7 +82,7 @@ export function verifyStampSig(cafeId, step, sigHex, cafePubHex) {
   try { return ed25519.verify(hexToBytes(sigHex), stampMessage(cafeId, step), hexToBytes(cafePubHex)); }
   catch { return false; }
 }
-// Check a scanned QR against the catalog, now. { ok, reason?, cafe, step }
+// Check a scanned QR against the catalog, now. { ok, reason?, cafe, step, sig }
 export function checkStamp(text, catalog, nowMs = Date.now()) {
   const s = parseStamp(text);
   if (!s) return { ok: false, reason: "not a Crema code" };
@@ -94,7 +91,7 @@ export function checkStamp(text, catalog, nowMs = Date.now()) {
   if (!verifyStampSig(s.cafeId, s.step, s.sig, cafe.pubkey)) return { ok: false, reason: "the code's signature is wrong", cafe };
   const now = stepOf(nowMs);
   if (Math.abs(now - s.step) > SKEW_STEPS) return { ok: false, reason: s.step < now ? "the code has expired - scan it fresh" : "the code is from the future (check your clock)", cafe };
-  const t = s.step * STEP_S * 1000;
+  const t = stepTimeMs(s.step);
   if (t < catalog.start || t > catalog.end) return { ok: false, reason: "outside the event's dates", cafe };
   return { ok: true, cafe, step: s.step, sig: s.sig };
 }
@@ -106,71 +103,48 @@ export function distanceM(lat1, lon1, lat2, lon2) {
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(a));
 }
-// accuracyM: the phone's reported accuracy; a fix that might be inside the radius counts
 export const cafeLat = (cafe) => cafe.latE6 / 1e6;
 export const cafeLon = (cafe) => cafe.lonE6 / 1e6;
+// accuracyM: the phone's reported accuracy; a fix that might be inside the radius counts
 export function nearCafe(cafe, lat, lon, accuracyM = 0) {
   const d = distanceM(cafeLat(cafe), cafeLon(cafe), lat, lon);
   return { ok: d - Math.min(accuracyM, 100) <= (cafe.radiusM || DEFAULT_RADIUS_M), distanceM: Math.round(d) };
 }
 
 // ── the organizer's signed catalog ──
-// { v:1, eventId, name, city, start(ms), end(ms), organizer(ed25519 pub hex), version,
-//   cafes:[{id,name,latE6,lonE6,radiusM,pubkey,address?,url?}] }  (coordinates are integer microdegrees:
-//   no floats in signed JSON, so JS and C++ produce the same bytes)
+// { v:1, eventId, name, city, start(ms), end(ms), version, organizer(ed25519 pub hex),
+//   cafes:[{id,name,latE6,lonE6,radiusM,pubkey,address?}] }
+const catalogMessage = (body) => utf8ToBytes("crema/catalog/v1|" + canonical(body));
 export function signCatalog(catalog, organizerSecretHex) {
-  const body = { ...catalog, organizer: bytesToHex(ed25519.getPublicKey(hexToBytes(organizerSecretHex))) };
+  const body = { ...catalog, organizer: publicKeyOf(organizerSecretHex) };
   delete body.sig;
-  const sig = ed25519.sign(utf8ToBytes("crema/catalog/v1|" + canonical(body)), hexToBytes(organizerSecretHex));
-  return { ...body, sig: bytesToHex(sig) };
+  return { ...body, sig: bytesToHex(ed25519.sign(catalogMessage(body), hexToBytes(organizerSecretHex))) };
 }
 export function verifyCatalog(signed, expectedOrganizerHex) {
-  if (!signed || !signed.sig || !signed.organizer) return false;
+  if (!signed || !signed.sig || !signed.organizer || !Array.isArray(signed.cafes)) return false;
   if (expectedOrganizerHex && signed.organizer !== expectedOrganizerHex) return false;
   const body = { ...signed }; delete body.sig;
-  try { return ed25519.verify(hexToBytes(signed.sig), utf8ToBytes("crema/catalog/v1|" + canonical(body)), hexToBytes(signed.organizer)); }
+  try { return ed25519.verify(hexToBytes(signed.sig), catalogMessage(body), hexToBytes(signed.organizer)); }
   catch { return false; }
 }
 
-// ── the player's claim ──
-// { v:1, type:"stamp.claim", eventId, cafeId, step, cafeSig, player(secp256k1 compressed hex), at(ms), id, sig }
-const claimDigest = (c) => sha256(utf8ToBytes("crema/claim/v1|" + canonical({ v: c.v, type: c.type, eventId: c.eventId, cafeId: c.cafeId, step: c.step, cafeSig: c.cafeSig, player: c.player, at: c.at })));
-export function makeClaim(checked, eventId, playerSecretHex, nowMs = Date.now()) {
-  const player = bytesToHex(secp256k1.getPublicKey(hexToBytes(playerSecretHex), true));
-  const c = { v: 1, type: "stamp.claim", eventId, cafeId: checked.cafe.id, step: checked.step, cafeSig: checked.sig, player, at: nowMs };
-  const d = claimDigest(c);
-  return { ...c, id: bytesToHex(d).slice(0, 32), sig: secp256k1.sign(d, hexToBytes(playerSecretHex)).toCompactHex() };
+// ── joining an event: what the organizer's join QR carries ──
+// crema:join?e=<eventId>&o=<organizer pub hex>&k=<event secret, 32 bytes b64url>&n=<name>
+export function makeJoinLink({ eventId, organizer, secretHex, name }) {
+  const q = new URLSearchParams({ e: eventId, o: organizer, k: b64url(hexToBytes(secretHex)), n: name || "" });
+  return "crema:join?" + q.toString();
 }
-// Anyone can check a claim: the café really signed that step, the player really signed the claim
-export function verifyClaim(c, catalog) {
-  if (!c || c.v !== 1 || c.type !== "stamp.claim" || c.eventId !== catalog.eventId) return false;
-  const cafe = catalog.cafes.find((x) => x.id === c.cafeId);
-  if (!cafe || !verifyStampSig(c.cafeId, c.step, c.cafeSig, cafe.pubkey)) return false;
-  const t = c.step * STEP_S * 1000;
-  if (t < catalog.start || t > catalog.end) return false;
-  // a claim made long after the QR it quotes means the code was passed around, not scanned
-  if (Math.abs(c.at - t) > (SKEW_STEPS + 1) * STEP_S * 1000) return false;
-  const d = claimDigest(c);
-  if (c.id !== bytesToHex(d).slice(0, 32)) return false;
-  try { return secp256k1.verify(c.sig, d, c.player); } catch { return false; }
+export function parseJoinLink(text) {
+  const t = String(text).trim();
+  if (!t.startsWith("crema:join?")) return null;
+  const q = new URLSearchParams(t.slice("crema:join?".length));
+  const eventId = q.get("e"), organizer = q.get("o"), k = q.get("k");
+  if (!eventId || !/^[0-9a-f]{64}$/.test(organizer || "") || !k) return null;
+  let secret;
+  try { secret = unb64url(k); } catch { return null; }
+  if (secret.length !== 32) return null;
+  return { eventId, organizer, secretHex: bytesToHex(secret), name: q.get("n") || eventId };
 }
+export const newEventSecret = () => bytesToHex(randomBytes(32));
 
-// ── the leaderboard: distinct cafés per player; ties go to whoever got there first ──
-export function leaderboard(claims, catalog) {
-  const byPlayer = new Map();
-  const sorted = [...claims].filter((c) => verifyClaim(c, catalog)).sort((a, b) => a.step - b.step || (a.id < b.id ? -1 : 1));
-  for (const c of sorted) {
-    let p = byPlayer.get(c.player);
-    if (!p) byPlayer.set(c.player, (p = { player: c.player, cafes: new Set(), stamps: 0, days: new Set(), reachedAt: 0 }));
-    const dayKey = c.cafeId + "@" + Math.floor((c.step * STEP_S) / 86400);
-    if (p.days.has(dayKey)) continue;     // one stamp per café per day
-    p.days.add(dayKey);
-    p.stamps++;
-    if (!p.cafes.has(c.cafeId)) { p.cafes.add(c.cafeId); p.reachedAt = c.step * STEP_S * 1000; }
-  }
-  return [...byPlayer.values()]
-    .map((p) => ({ player: p.player, cafes: p.cafes.size, stamps: p.stamps, visited: [...p.cafes], reachedAt: p.reachedAt }))
-    .sort((a, b) => b.cafes - a.cafes || a.reachedAt - b.reachedAt || (a.player < b.player ? -1 : 1));
-}
-
-export { randomBytes, bytesToHex, hexToBytes };
+export { bytesToHex, hexToBytes, randomBytes };

@@ -1,0 +1,3 @@
+[submodule "packages/loam-sync"]
+	path = packages/loam-sync
+	url = https://github.com/vpavlin/loam-sync.git
