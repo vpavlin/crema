@@ -11,6 +11,7 @@ import * as FS from "expo-file-system/legacy";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { Buffer } from "buffer";
 import * as storage from "./loam-transport-pkg/src/loam-storage";
+import { locationFix } from "./native";
 import { crumb } from "./crashlog";
 import * as P from "../../../packages/protocol/src/index.js";
 import { CremaGame } from "../../../packages/engine/src/engine.js";
@@ -165,6 +166,30 @@ class Crema {
   async setSharedNode(on: boolean) { await secretStore.set(K_SHARED, on ? "1" : "0"); this.net.shared = on; this.emit(); }
 
   // ── café mode: this device shows a café's rotating stamp ──
+  // ── where am I (one fix on request; never leaves the phone) ──
+  here: { lat: number; lon: number; accuracy: number; at: number } | null = null;
+  locating = false;
+  async locate(): Promise<{ ok: boolean; message?: string }> {
+    if (this.locating) return { ok: false, message: "Already locating…" };
+    this.locating = true; this.emit();
+    try {
+      const f = await locationFix(20_000);
+      this.here = { ...f, at: Date.now() };
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, message: String(e?.message || e) };
+    } finally { this.locating = false; this.emit(); }
+  }
+  // the event's cafés by distance from `here` (closest first); [] without a fix
+  nearby(g: CremaGame | null): { cafe: any; m: number; visited: boolean }[] {
+    const s = g ? g.state() : null;
+    if (!this.here || !s?.catalog) return [];
+    const h = this.here;
+    return s.catalog.cafes
+      .map((c: any) => ({ cafe: c, m: P.distanceM(h.lat, h.lon, P.cafeLat(c), P.cafeLon(c)), visited: s.myVisited.has(c.id) }))
+      .sort((a: any, b: any) => a.m - b.m);
+  }
+
   // ── the event map ──
   maps = new Map<string, MapState>();          // sha256 -> state
   private mapJobs = new Set<string>();

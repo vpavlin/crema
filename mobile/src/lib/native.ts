@@ -12,8 +12,8 @@ export async function scanQr(prompt: string): Promise<string | null> {
 export async function locationFix(timeoutMs = 15000): Promise<{ lat: number; lon: number; accuracy: number }> {
   if (Platform.OS !== "android") throw new Error("Location: Android only");
   const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, {
-    title: "Location to stamp",
-    message: "Crema checks you're at the café when you scan its code. Your position stays on this phone.",
+    title: "Your location",
+    message: "Crema uses it to check you're at a café when you stamp, and to find the café nearest to you. It stays on this phone.",
     buttonPositive: "OK",
   });
   if (granted !== PermissionsAndroid.RESULTS.GRANTED) throw new Error("Location permission is needed to stamp");

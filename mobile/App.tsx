@@ -24,6 +24,7 @@ function useCrema() {
   return crema;
 }
 
+const fmtDist = (m: number) => (m < 1000 ? Math.round(m / 10) * 10 + " m" : (m / 1000).toFixed(1) + " km") + " · ~" + Math.max(1, Math.round(m / 80)) + " min walk";
 const short = (a: string) => (a ? a.slice(0, 6) + "…" + a.slice(-4) : "");
 
 export default function App() {
@@ -131,7 +132,9 @@ function Passport() {
   const g = crema.game()!;
   const s = g.state();
   if (!s.catalog) return <View style={{ padding: 20 }}><Text style={st.body}>Waiting for the café list…</Text><Text style={st.muted}>It comes from the other players or the organizer over Logos - keep the app open online for a moment.</Text></View>;
-  const cafes = s.catalog.cafes;
+  const near = crema.nearby(g);
+  const dist = new Map(near.map((x) => [x.cafe.id, x.m]));
+  const cafes = near.length ? near.map((x) => x.cafe) : s.catalog.cafes;
   return (
     <FlatList
       contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
@@ -139,6 +142,9 @@ function Passport() {
         <View style={{ marginBottom: 8 }}>
           <Text style={st.big}>{s.myVisited.size} / {cafes.length}</Text>
           <Text style={st.muted}>cafés stamped{s.share ? "" : " · you're not on the leaderboard"}</Text>
+          <Pressable style={[st.small, { marginTop: 10 }]} disabled={crema.locating} onPress={async () => { const r = await crema.locate(); if (!r.ok && r.message) Alert.alert("Location", r.message); }}>
+            <Text style={st.smallText}>{crema.locating ? "Finding you…" : near.length ? "Nearest first · update my location" : "Sort by distance (uses my location)"}</Text>
+          </Pressable>
         </View>
       }
       data={cafes}
@@ -149,6 +155,7 @@ function Passport() {
           <View style={[st.row, done && { borderColor: C.crema }]}>
             <Text style={st.stamp}>{done ? "☕" : "○"}</Text>
             <View style={{ flex: 1 }}><Text style={st.rowTitle}>{item.name}</Text>{item.address ? <Text style={st.muted}>{item.address}</Text> : null}</View>
+            {dist.has(item.id) ? <Text style={st.dist}>{fmtDist(dist.get(item.id)!).split(" · ")[0]}</Text> : null}
           </View>
         );
       }}
@@ -201,6 +208,16 @@ function MapTab() {
     })();
     return () => { off = true; };
   }, [pageReady, map.state, map.path, shown]);
+  // "Near me": one fix, then the closest café not stamped yet (or the closest one) framed with you
+  const near = crema.nearby(g);
+  const target = near.find((x) => !x.visited) || near[0];
+  const showMe = () => {
+    const h = crema.here;
+    if (!h) return;
+    const t = target ? `${target.cafe.latE6 / 1e6},${target.cafe.lonE6 / 1e6},${JSON.stringify(target.cafe.name)}` : "null,null,null";
+    web.current?.injectJavaScript(`window.__crema.me(${h.lat},${h.lon},${h.accuracy},${t});true;`);
+  };
+  useEffect(() => { if (pageReady && crema.here) showMe(); }, [pageReady, crema.here?.at]);
   const pct = map.total ? Math.floor(((map.bytes || 0) * 100) / map.total) : 0;
   return (
     <View style={{ flex: 1 }}>
@@ -209,6 +226,15 @@ function MapTab() {
         : `Getting the event map over Logos Storage… ${pct ? pct + " %" : ""}`}</Text>}
       {map.state === "no-storage" && <Text style={st.mapNote}>{map.error}</Text>}
       {map.state === "failed" && <Pressable onPress={() => crema.retryMap()}><Text style={st.mapNote}>No map yet ({map.error}). Tap to try again.</Text></Pressable>}
+      {target ? (
+        <Pressable onPress={showMe} style={st.nearCard}>
+          <Text style={st.rowTitle}>{target.visited ? "Closest café: " : "Closest new café: "}{target.cafe.name}</Text>
+          <Text style={st.muted}>{fmtDist(target.m)}{crema.here && crema.here.accuracy > 60 ? " (location ±" + Math.round(crema.here.accuracy) + " m)" : ""}</Text>
+        </Pressable>
+      ) : null}
+      <Pressable style={st.nearBtn} disabled={crema.locating} onPress={async () => { const r = await crema.locate(); if (!r.ok && r.message) Alert.alert("Location", r.message); }}>
+        <Text style={st.smallText}>{crema.locating ? "Finding you…" : "Near me"}</Text>
+      </Pressable>
       <WebView ref={web} originWhitelist={["*"]} source={{ html }} style={{ flex: 1, backgroundColor: C.bg }}
         onMessage={(e) => { try { const m = JSON.parse(e.nativeEvent.data); if (m.t === "ready") setPageReady(true); if (m.t === "map" && !m.ok) crumb("map render " + m.error); } catch { /* */ } }} />
     </View>
@@ -302,6 +328,12 @@ function CafeMode({ onExit }: { onExit: () => void }) {
 }
 
 const st = StyleSheet.create({
+  small: { alignSelf: "flex-start", borderWidth: 1, borderColor: C.line, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: C.card },
+  smallText: { color: C.crema, fontSize: 13, fontWeight: "600" },
+  dist: { color: C.crema, fontSize: 13, marginLeft: 8 },
+  nearCard: { backgroundColor: C.card, borderBottomWidth: 1, borderColor: C.line, paddingHorizontal: 14, paddingVertical: 8 },
+  nearBtn: { position: "absolute", right: 12, bottom: 44, zIndex: 10, elevation: 6, borderWidth: 1, borderColor: C.crema, borderRadius: 20,
+             paddingHorizontal: 14, paddingVertical: 9, backgroundColor: C.card },
   mapNote: { color: C.muted, backgroundColor: C.card, paddingHorizontal: 14, paddingVertical: 8, fontSize: 13 },
   root: { flex: 1, backgroundColor: C.bg },
   header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6, flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 },

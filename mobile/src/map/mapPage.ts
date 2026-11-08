@@ -48,6 +48,8 @@ html,body,#m{margin:0;height:100%;background:${C.bg}}
 .maplibregl-popup-content{background:${C.land};color:${C.text};border-radius:10px;font:14px sans-serif}
 .maplibregl-popup-tip{border-top-color:${C.land}!important;border-bottom-color:${C.land}!important}
 .maplibregl-ctrl-attrib{background:#0008!important;color:#b59c86}.maplibregl-ctrl-attrib a{color:#b59c86}
+.me{width:16px;height:16px;border-radius:50%;background:#4aa3ff;border:3px solid #fff;box-shadow:0 0 0 6px #4aa3ff44}
+.target{box-shadow:0 0 0 4px ${C.crema},0 1px 4px #0008!important}
 #note{position:absolute;left:8px;top:8px;padding:4px 8px;border-radius:8px;background:#0009;color:#b59c86;font:12px sans-serif}
 </style></head><body><div id="m"></div><div id="note"></div>
 <script>${MAPLIBRE_JS}</script><script>${PMTILES_JS}</script><script>
@@ -57,12 +59,13 @@ var STYLE_TILES=${JSON.stringify(mapStyle(true, maxzoom))};
 var m=new maplibregl.Map({container:'m',style:STYLE_BASE,center:[16.608,49.195],zoom:14,attributionControl:{compact:true},maxZoom:19});
 function note(t){var n=document.getElementById('note');n.textContent=t||'';n.style.display=t?'block':'none';}
 function post(o){try{window.ReactNativeWebView.postMessage(JSON.stringify(o));}catch(e){}}
-var b=null,pts=[];
+var b=null,pts=[],markers=[],meMarker=null;
 cafes.forEach(function(c){
   var el=document.createElement('div');el.className='cafe';el.style.background=c.v?'${C.crema}':'#6b4f3f';
   var p=document.createElement('div');var t=document.createElement('b');t.textContent=c.n;p.appendChild(t);
   if(c.a){p.appendChild(document.createElement('br'));p.appendChild(document.createTextNode(c.a));}
   new maplibregl.Marker({element:el}).setLngLat([c.lon,c.lat]).setPopup(new maplibregl.Popup({offset:12}).setDOMContent(p)).addTo(m);
+  markers.push({el:el,c:c});
   pts.push([c.lon,c.lat]);
 });
 if(pts.length){var bb=pts.reduce(function(a,p){return[[Math.min(a[0][0],p[0]),Math.min(a[0][1],p[1])],[Math.max(a[1][0],p[0]),Math.max(a[1][1],p[1])]];},[pts[0],pts[0]]);
@@ -96,6 +99,14 @@ var parts=[];
 window.__crema={
   note:note,
   addChunk:function(s){parts.push(s);},
+  // where the phone is (one fix, from React Native) and the café to head for: show both
+  me:function(lat,lon,acc,tLat,tLon,tName){
+    if(!meMarker){var el=document.createElement('div');el.className='me';meMarker=new maplibregl.Marker({element:el});}
+    meMarker.setLngLat([lon,lat]).addTo(m);
+    markers.forEach(function(k){k.el.classList.toggle('target',tName!=null&&k.c.n===tName);});
+    if(tLat!=null){var b=[[Math.min(lon,tLon),Math.min(lat,tLat)],[Math.max(lon,tLon),Math.max(lat,tLat)]];m.fitBounds(b,{padding:70,maxZoom:17});}
+    else m.flyTo({center:[lon,lat],zoom:Math.max(m.getZoom(),15)});
+  },
   begin:function(meta){P=meta;buf=new Uint8Array(meta.size);have=0;availZ=-1;},
   addPiece:function(b64){
     try{var bin=atob(b64);if(!P||have+bin.length>buf.length)return;for(var i=0;i<bin.length;i++)buf[have+i]=bin.charCodeAt(i);have+=bin.length;refresh();}
