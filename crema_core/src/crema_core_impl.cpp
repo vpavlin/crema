@@ -8,6 +8,9 @@
 #include <filesystem>
 #include <fstream>
 #include <openssl/evp.h>
+#include <curl/curl.h>
+#include <thread>
+#include "maptiles.hpp"
 #include <pwd.h>
 #include <unistd.h>
 #include "qrcodegen.hpp"
@@ -322,6 +325,12 @@ json CremaCoreImpl::eventJson(const Ev& e) {
               {"organizer", e.organizer}, {"catalog", st.catalog}, {"leaderboard", lb}, {"logSize", e.game->log.size()}};
     if (e.organizer) {
         j["draft"] = e.draft;
+        if (j["draft"].contains("map") && j["draft"]["map"].contains("pieces")) {   // the view needs counts, not 30 paths
+            json& dm = j["draft"]["map"];
+            int done = 0;
+            for (const auto& pc : dm["pieces"]) if (!pc.value("cid", "").empty()) done++;
+            dm["piecesDone"] = done; dm["piecesTotal"] = dm["pieces"].size(); dm.erase("pieces"); dm.erase("zoomEnds");
+        }
         const long long pub = st.catalog.is_null() ? 0 : st.catalog.value("version", 0LL);
         j["publishedVersion"] = pub;
         // unpublished changes: the draft's cafés differ from the published list
@@ -336,6 +345,8 @@ json CremaCoreImpl::eventJson(const Ev& e) {
             if (pubMap != draftMap && !(dm.is_object() && dm.value("state", "") == "uploading" && pubMap.empty())) dirty = true;
         }
         j["unpublished"] = dirty;
+        auto mk = m_making.find(e.join.eventId);
+        if (mk != m_making.end()) j["mapMaking"] = mk->second;
     }
     return j;
 }
@@ -442,10 +453,17 @@ std::string CremaCoreImpl::publishCatalog(std::string eventId) try {
     const json dm = e->draft.value("map", json());
     bool mapIn = false;
     if (dm.is_object() && dm.value("state", "") == "ready" && !dm.value("cid", "").empty()) {
+        json pcs = json::array();
+        for (const auto& pc : dm.value("pieces", json::array())) pcs.push_back(pc.value("cid", ""));
         cat["map"] = {{"cid", dm["cid"]}, {"sha256", dm["sha256"]}, {"size", dm["size"]}, {"bboxE6", dm["bboxE6"]},
-                      {"maxzoom", dm.value("maxzoom", 16)}, {"providers", dm.value("providers", json::array())}};
+                      {"minzoom", dm.value("minzoom", 0)}, {"maxzoom", dm.value("maxzoom", 16)}, {"providers", dm.value("providers", json::array())}};
+        if (!pcs.empty()) {   // the relay-friendly copy: pieces in file order + where each zoom is complete
+            cat["map"]["pieces"] = pcs; cat["map"]["pieceSize"] = dm.value("pieceSize", 61440LL);
+            cat["map"]["dirEnd"] = dm.value("dirEnd", 0LL); cat["map"]["zoomEnds"] = dm.value("zoomEnds", json::array());
+        }
         mapIn = true;
     }
+    if (cat.dump().size() > 12000) return fail("The café list and map index are too big for one message - fewer cafés or a smaller map");
     cat = crema::signCatalog(cat, m_organizerSecret);
     std::vector<crema::Bytes> out;
     if (!e->game->publishCatalog(cat, nowMs(), out)) return fail("Couldn't publish (the signature didn't check)");
@@ -518,6 +536,11 @@ std::string CremaCoreImpl::selectEvent(std::string eventId) {
 }
 
 // ── the event map on Logos Storage (docs/adr/0002) ──
+// The file goes up twice: as 60 KiB pieces (one Storage block each - the only size that crosses a
+// circuit relay, see ADR 0002) and whole (for 0.2 phones). Pieces are in file order, and a PMTiles
+// prefix holds the coarse zooms, so a phone lights the map up coarse-to-fine as pieces arrive.
+namespace { constexpr long long kPieceSize = 61440; constexpr long long kMaxMapBytes = 6LL * 1024 * 1024; }
+
 std::string CremaCoreImpl::importMap(std::string eventId, std::string path) try {
     std::lock_guard<std::recursive_mutex> lk(m_mtx);
     Ev* e = find(eventId);
@@ -526,26 +549,44 @@ std::string CremaCoreImpl::importMap(std::string eventId, std::string path) try 
     std::error_code ec;
     if (!fs::is_regular_file(path, ec)) return fail("No such file: " + path);
     const auto sz0 = fs::file_size(path, ec);
-    if (ec || sz0 == 0 || sz0 > 64ull * 1024 * 1024) return fail("The map must be a file of up to 64 MB");
+    if (ec || sz0 == 0) return fail("Can't read the file");
+    if ((long long)sz0 > kMaxMapBytes) return fail("The map is " + std::to_string(sz0 / 1048576) + " MB; an event map can be at most 6 MB (make a smaller area)");
     json info; std::string why;
     if (!pmtilesInfo(path, info, why)) return fail(why);
+    const std::string bytes = readFile(path);
+    const auto L = maptiles::pmtilesLayout(bytes);
+    if (!L.error.empty()) return fail(L.error);
     long long size = 0;
     const std::string sha = sha256File(path, size);
     if (sha.empty()) return fail("Can't read the file");
-    fs::create_directories(m_dataDir + "/maps", ec);
-    // Storage's manifest carries the file name: name it by content so the poll can find it again
-    const std::string dst = m_dataDir + "/maps/" + sha + ".pmtiles";
-    if (!fs::exists(dst, ec)) fs::copy_file(path, dst, fs::copy_options::overwrite_existing, ec);
-    if (ec) return fail("Can't copy the map: " + ec.message());
-    json m = {{"file", dst}, {"sha256", sha}, {"size", size}, {"bboxE6", info["bboxE6"]}, {"maxzoom", info["maxzoom"]},
-              {"state", "uploading"}, {"since", nowMs()}};
     const json old = e->draft.value("map", json());
-    if (old.is_object() && old.value("sha256", "") == sha && old.value("state", "") == "ready") m = old;   // the same map again
+    if (old.is_object() && old.value("sha256", "") == sha && old.value("state", "") == "ready") {   // the same map again
+        publish();
+        return ok({{"sha256", sha}, {"size", size}, {"state", "ready"}});
+    }
+    // Storage's manifest carries the file name: name everything by content so the poll can find it again
+    const std::string dir = m_dataDir + "/maps/" + sha;
+    fs::create_directories(dir, ec);
+    const std::string whole = dir + "/" + sha + ".pmtiles";
+    if (!fs::exists(whole, ec)) fs::copy_file(path, whole, fs::copy_options::overwrite_existing, ec);
+    if (ec) return fail("Can't copy the map: " + ec.message());
+    json pieces = json::array();
+    for (long long off = 0, i = 0; off < size; off += kPieceSize, i++) {
+        char nm[16]; snprintf(nm, sizeof nm, ".p%03lld", i);
+        const std::string pf = dir + "/" + sha + nm;
+        if (!writeAtomic(pf, bytes.substr((size_t)off, (size_t)std::min(kPieceSize, size - off)))) return fail("Can't write the map pieces");
+        pieces.push_back({{"file", pf}, {"cid", ""}});
+    }
+    json zoomEnds = json::array();
+    for (const auto& [z, end] : L.zoomEnds) zoomEnds.push_back({z, (long long)end});
+    json m = {{"file", whole}, {"sha256", sha}, {"size", size}, {"bboxE6", info["bboxE6"]}, {"minzoom", L.minzoom}, {"maxzoom", L.maxzoom},
+              {"dirEnd", (long long)L.dirEnd}, {"zoomEnds", zoomEnds}, {"pieceSize", kPieceSize}, {"pieces", pieces}, {"cid", ""},
+              {"state", "uploading"}, {"since", nowMs()}};
     e->draft["map"] = m;
     saveEvent(*e);
-    if (m["state"] == "uploading") uploadMap(*e);
+    uploadMap(*e);
     publish();
-    return ok({{"sha256", sha}, {"size", size}, {"bboxE6", info["bboxE6"]}, {"maxzoom", info["maxzoom"]}, {"state", m["state"]}});
+    return ok({{"sha256", sha}, {"size", size}, {"pieces", pieces.size()}, {"bboxE6", info["bboxE6"]}, {"maxzoom", L.maxzoom}, {"state", "uploading"}});
 } catch (const std::exception& e) { return fail(e.what()); }
 
 std::string CremaCoreImpl::removeMap(std::string eventId) {
@@ -553,6 +594,7 @@ std::string CremaCoreImpl::removeMap(std::string eventId) {
     Ev* e = find(eventId);
     if (!e || !e->organizer) return fail("Not an event you organize");
     e->draft.erase("map");
+    for (auto it = m_upSessions.begin(); it != m_upSessions.end();) it = it->second.rfind(eventId + "\t", 0) == 0 ? m_upSessions.erase(it) : std::next(it);
     saveEvent(*e);
     publish();
     return ok();
@@ -576,27 +618,44 @@ void CremaCoreImpl::ensureStorage() {
     }
 }
 
+namespace {
+// upload items: 0..n-1 = pieces, -1 = the whole file. Pieces first: they are what relayed phones need.
+int nextItem(const json& m) {
+    const json& ps = m["pieces"];
+    for (size_t i = 0; i < ps.size(); i++) if (ps[i].value("cid", "").empty()) return (int)i;
+    return m.value("cid", "").empty() ? -1 : -2;   // -2: everything is up
+}
+std::string itemFile(const json& m, int idx) { return idx < 0 ? m.value("file", "") : m["pieces"][idx].value("file", ""); }
+std::string sessKey(const std::string& eventId, int idx) { return eventId + "\t" + std::to_string(idx); }
+}
+
+// one upload at a time, in item order; each done-event (or the manifest poll) starts the next
 void CremaCoreImpl::uploadMap(Ev& e) {
     json& m = e.draft["map"];
     if (!m.is_object() || m.value("state", "") != "uploading" || m_storageBusy) return;
-    for (const auto& [sess, id] : m_upSessions) if (id == e.join.eventId) return;
+    if (!m.contains("pieces")) { m["pieces"] = json::array(); }
+    const std::string prefix = e.join.eventId + "\t";
+    for (const auto& [sess, key] : m_upSessions) if (key.rfind(prefix, 0) == 0) return;
+    const int idx = nextItem(m);
+    if (idx == -2) return;
     ensureStorage();
     m_storageBusy = true;
     m["tried"] = nowMs();
-    const std::string id = e.join.eventId;
+    const std::string key = sessKey(e.join.eventId, idx);
     auto life = m_life;
     try {
-        modules().storage_module.uploadUrlAsyncResult(m.value("file", ""), 65536, true,
-            [life, id](logos::AsyncResult<StdLogosResult> ar) {
-                withSelf(life, [ar, id](CremaCoreImpl* s) {
+        modules().storage_module.uploadUrlAsyncResult(itemFile(m, idx), 65536, true,
+            [life, key](logos::AsyncResult<StdLogosResult> ar) {
+                withSelf(life, [ar, key](CremaCoreImpl* s) {
                     s->m_storageBusy = false;
                     // a timeout may mean "still running": the manifest poll finds it by file name
-                    if (!ar.ok()) { s->m_upSessions["?" + id] = id; return; }
+                    if (!ar.ok()) { s->m_upSessions["?" + key] = key; return; }
                     if (!ar.value.success || resultString(ar.value).empty()) {
+                        const std::string id = key.substr(0, key.find('\t'));
                         if (Ev* e = s->find(id)) { e->draft["map"]["error"] = "Storage refused the upload: " + ar.value.error; s->publish(); }
                         return;
                     }
-                    s->m_upSessions[resultString(ar.value)] = id;
+                    s->m_upSessions[resultString(ar.value)] = key;
                 });
             }, 60000);
     } catch (const std::exception& ex) {
@@ -610,24 +669,32 @@ void CremaCoreImpl::onUploadDone(const std::string& payload) {
     if (!p.is_object()) return;
     auto it = m_upSessions.find(p.value("sessionId", ""));
     if (it == m_upSessions.end()) return;
-    const std::string id = it->second;
+    const std::string key = it->second;
     m_upSessions.erase(it);
+    const std::string id = key.substr(0, key.find('\t'));
+    const int idx = std::stoi(key.substr(key.find('\t') + 1));
     if (!p.value("success", false) || p.value("cid", "").empty()) {
         if (Ev* e = find(id)) { e->draft["map"]["error"] = "Upload failed: " + p.value("error", std::string("unknown")); e->draft["map"]["tried"] = nowMs(); publish(); }
         return;
     }
-    mapUploaded(id, p.value("cid", ""));
+    mapUploaded(id, idx, p.value("cid", ""));
 }
 
-void CremaCoreImpl::mapUploaded(const std::string& eventId, const std::string& cid) {
+void CremaCoreImpl::mapUploaded(const std::string& eventId, int idx, const std::string& cid) {
     Ev* e = find(eventId);
     if (!e || !e->draft.contains("map")) return;
     json& m = e->draft["map"];
-    m["cid"] = cid; m["state"] = "ready"; m.erase("error");
-    for (auto it = m_upSessions.begin(); it != m_upSessions.end();) it = it->second == eventId ? m_upSessions.erase(it) : std::next(it);
+    if (m.value("state", "") != "uploading") return;
+    if (idx >= 0) { if (idx >= (int)m["pieces"].size()) return; m["pieces"][idx]["cid"] = cid; }
+    else m["cid"] = cid;
+    m.erase("error");
+    const std::string key = sessKey(eventId, idx);
+    for (auto it = m_upSessions.begin(); it != m_upSessions.end();) it = it->second == key ? m_upSessions.erase(it) : std::next(it);
+    if (nextItem(m) != -2) { saveEvent(*e); publish(); uploadMap(*e); return; }
+    m["state"] = "ready";
     saveEvent(*e);
     publish();
-    fprintf(stderr, "[crema] map %s on Storage: %s\n", m.value("sha256", "").substr(0, 12).c_str(), cid.c_str());
+    fprintf(stderr, "[crema] map %s on Storage: %zu pieces + whole %s\n", m.value("sha256", "").substr(0, 12).c_str(), m["pieces"].size(), m.value("cid", "").c_str());
     // where phones can find it first: this node (Loam dials these before asking the DHT)
     auto life = m_life;
     try {
@@ -637,7 +704,8 @@ void CremaCoreImpl::mapUploaded(const std::string& eventId, const std::string& c
             if (!d.is_object() || !d.contains("id")) return;
             json addrs = json::array();
             for (const auto& a : d.value("addrs", json::array()))
-                if (a.is_string() && a.get<std::string>().find("/127.") == std::string::npos && a.get<std::string>().find("/::1/") == std::string::npos) addrs.push_back(a);
+                if (a.is_string() && a.get<std::string>().find("/127.") == std::string::npos && a.get<std::string>().find("/::1/") == std::string::npos
+                    && a.get<std::string>().find("mix-transport") == std::string::npos) addrs.push_back(a);
             json peer = {{"peerId", d["id"]}, {"addrs", addrs}};
             withSelf(life, [eventId, peer](CremaCoreImpl* s) {
                 Ev* e = s->find(eventId);
@@ -649,8 +717,8 @@ void CremaCoreImpl::mapUploaded(const std::string& eventId, const std::string& c
     } catch (...) {}
 }
 
-// Storage done-events can be lost: read the same fact back (our staged file's manifest), and retry
-// an upload that failed or was cut off by a restart.
+// Storage done-events can be lost: read the same facts back (our staged files' manifests), and retry
+// an upload that failed, stalled or was cut off by a restart.
 void CremaCoreImpl::pollStorage() {
     const long long now = nowMs();
     bool pending = false;
@@ -660,8 +728,11 @@ void CremaCoreImpl::pollStorage() {
         if (m.value("state", "") != "uploading") continue;
         pending = true;
         bool inFlight = false;
-        for (const auto& [sess, eid] : m_upSessions) if (eid == id) inFlight = true;
-        if (!inFlight && now - m.value("tried", 0LL) > 120000) uploadMap(*e);
+        for (const auto& [sess, key] : m_upSessions) if (key.rfind(id + "\t", 0) == 0) inFlight = true;
+        const long long tried = m.value("tried", 0LL);
+        if (inFlight && now - tried > 180000)   // stuck: forget it, the manifest poll or a retry settles it
+            for (auto it = m_upSessions.begin(); it != m_upSessions.end();) it = it->second.rfind(id + "\t", 0) == 0 ? m_upSessions.erase(it) : std::next(it);
+        else if (!inFlight && (m.contains("error") ? now - tried > 60000 : true)) uploadMap(*e);
     }
     if (!pending || m_storageBusy || now - m_lastManifestPollMs < 10000 || !m_storageStarted) return;
     m_lastManifestPollMs = now;
@@ -674,15 +745,160 @@ void CremaCoreImpl::pollStorage() {
                 if (!ar.ok() || !ar.value.success) return;
                 json arr = resultJson(ar.value);
                 if (!arr.is_array()) return;
-                std::vector<std::pair<std::string, std::string>> done;
+                std::map<std::string, std::string> byName;
+                for (const auto& m : arr) if (m.is_object() && !m.value("cid", "").empty()) byName[m.value("filename", "")] = m.value("cid", "");
+                struct Hit { std::string id; int idx; std::string cid; };
+                std::vector<Hit> hits;
                 for (auto& [id, e] : s->m_events) {
-                    if (!e->draft.contains("map") || e->draft["map"].value("state", "") != "uploading") continue;
-                    const std::string want = e->draft["map"].value("sha256", "") + ".pmtiles";
-                    for (const auto& m : arr)
-                        if (m.is_object() && m.value("filename", "") == want && !m.value("cid", "").empty()) { done.push_back({id, m["cid"].get<std::string>()}); break; }
+                    if (!e->draft.contains("map")) continue;
+                    const json& m = e->draft["map"];
+                    if (m.value("state", "") != "uploading") continue;
+                    for (int i = -1; i < (int)m.value("pieces", json::array()).size(); i++) {
+                        const std::string have = i < 0 ? m.value("cid", "") : m["pieces"][i].value("cid", "");
+                        if (!have.empty()) continue;
+                        auto it = byName.find(fs::path(itemFile(m, i)).filename().string());
+                        if (it != byName.end()) hits.push_back({id, i, it->second});
+                    }
                 }
-                for (const auto& [id, cid] : done) s->mapUploaded(id, cid);
+                for (const auto& h : hits) s->mapUploaded(h.id, h.idx, h.cid);
             });
         }, 30000);
     } catch (...) { m_storageBusy = false; }
+}
+
+// ── making the map here (maptiles.hpp; ADR 0002 amended) ──
+namespace {
+// A nix-built libcurl looks for CA certificates under /nix/store: point it at the system's bundle.
+const char* caBundle() {
+    static const char* paths[] = {"/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem",
+                                  "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem", "/usr/local/etc/openssl/cert.pem"};
+    if (const char* e = std::getenv("SSL_CERT_FILE")) if (*e) return e;
+    if (const char* e = std::getenv("CURL_CA_BUNDLE")) if (*e) return e;
+    for (const char* p : paths) { std::error_code ec; if (fs::is_regular_file(p, ec)) return p; }
+    return nullptr;
+}
+struct Dl { std::string body; std::function<void(long long)> progress; long long lastReport = 0; };
+size_t dlWrite(char* p, size_t sz, size_t n, void* ud) {
+    auto* d = static_cast<Dl*>(ud);
+    if (d->body.size() + sz * n > 300ull * 1024 * 1024) return 0;   // a city map is tens of MB; stop runaway answers
+    d->body.append(p, sz * n);
+    if (d->progress && (long long)d->body.size() - d->lastReport > 512 * 1024) { d->lastReport = (long long)d->body.size(); d->progress(d->lastReport); }
+    return sz * n;
+}
+// one POST to one Overpass server; returns "" + error on failure (busy = worth trying elsewhere)
+std::string overpassOnce(const std::string& url, const std::string& query, std::string& err, bool& busy, const std::function<void(long long)>& progress) {
+    static std::once_flag once;
+    std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+    CURL* c = curl_easy_init();
+    if (!c) { err = "curl init failed"; return ""; }
+    busy = false;
+    char* q = curl_easy_escape(c, query.c_str(), (int)query.size());
+    const std::string form = std::string("data=") + (q ? q : "");
+    if (q) curl_free(q);
+    Dl d; d.progress = progress;
+    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(c, CURLOPT_POSTFIELDS, form.c_str());
+    curl_easy_setopt(c, CURLOPT_USERAGENT, "crema/0.3 (github.com/vpavlin/crema; event map maker)");
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, dlWrite);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &d);
+    curl_easy_setopt(c, CURLOPT_TIMEOUT, 300L);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 30L);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(c, CURLOPT_ACCEPT_ENCODING, "");
+    if (const char* ca = caBundle()) curl_easy_setopt(c, CURLOPT_CAINFO, ca);
+    const CURLcode rc = curl_easy_perform(c);
+    long status = 0;
+    curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_cleanup(c);
+    if (rc != CURLE_OK) { err = std::string("download failed: ") + curl_easy_strerror(rc); busy = true; return ""; }
+    if (status == 429 || status == 502 || status == 503 || status == 504) { err = "Overpass is busy (HTTP " + std::to_string(status) + ")"; busy = true; return ""; }
+    if (status != 200) { err = "Overpass answered HTTP " + std::to_string(status); return ""; }
+    return std::move(d.body);
+}
+// the public Overpass servers take turns; a busy one is common (HTTP 429/502/504)
+std::string overpass(const std::string& query, std::string& err, const std::function<void(long long)>& progress) {
+    std::vector<std::string> urls;
+    if (const char* env = std::getenv("CREMA_OVERPASS_URL")) if (*env) urls.push_back(env);
+    for (const char* u : {"https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://overpass.kumi.systems/api/interpreter"}) urls.push_back(u);
+    std::string last;
+    for (int round = 0; round < 2; round++) {
+        for (const auto& u : urls) {
+            bool busy = false;
+            std::string e;
+            std::string body = overpassOnce(u, query, e, busy, progress);
+            if (!body.empty()) return body;
+            fprintf(stderr, "[crema] overpass %s: %s\n", u.c_str(), e.c_str());
+            last = e;
+            if (!busy) { err = e; return ""; }
+        }
+        std::this_thread::sleep_for(std::chrono::seconds(20));
+    }
+    err = last + " - every Overpass server was busy; try again in a few minutes";
+    return "";
+}
+} // namespace
+
+std::string CremaCoreImpl::makeMap(std::string eventId, std::string marginM) try {
+    std::lock_guard<std::recursive_mutex> lk(m_mtx);
+    Ev* e = find(eventId);
+    if (!e || !e->organizer) return fail("Not an event you organize");
+    if (m_making.count(eventId) && m_making[eventId].value("error", "").empty()) return fail("A map is already being made");
+    const json cafes = e->draft.value("cafes", json::array());
+    if (cafes.empty()) return fail("Add the cafés first: the map covers them");
+    double margin = 500;
+    try { if (!marginM.empty()) margin = std::stod(marginM); } catch (...) {}
+    margin = std::max(100.0, std::min(margin, 3000.0));
+    double s = 90, n = -90, w = 180, ea = -180;
+    for (const auto& c : cafes) {
+        const double la = c.value("latE6", 0LL) / 1e6, lo = c.value("lonE6", 0LL) / 1e6;
+        s = std::min(s, la); n = std::max(n, la); w = std::min(w, lo); ea = std::max(ea, lo);
+    }
+    const double dLat = margin / 111320.0, dLon = margin / (111320.0 * std::cos((s + n) / 2 * M_PI / 180.0));
+    const maptiles::Box box{w - dLon, s - dLat, ea + dLon, n + dLat};
+    const double kmW = (box.e - box.w) * 111.32 * std::cos((s + n) / 2 * M_PI / 180.0), kmH = (box.n - box.s) * 111.32;
+    if (kmW > 20 || kmH > 20) return fail("The cafés span more than 20 km - the map would be too big");
+    m_making[eventId] = {{"step", "downloading"}, {"bytes", 0}, {"box", {box.w, box.s, box.e, box.n}}};
+    publish();
+    auto life = m_life;
+    const std::string out = m_dataDir + "/maps/made-" + eventId + ".pmtiles";
+    std::thread([life, eventId, box, out] {
+        // nothing here touches the module: progress and the result hop back through withSelf
+        auto report = [life, eventId](json st) {
+            withSelf(life, [eventId, st](CremaCoreImpl* self) {
+                auto it = self->m_making.find(eventId);
+                if (it == self->m_making.end()) return;
+                it->second.update(st);
+                self->publish();
+            });
+        };
+        std::string err;
+        const std::string body = overpass(maptiles::overpassQuery(box), err, [&](long long b) { report({{"bytes", b}}); });
+        if (body.empty()) { withSelf(life, [eventId, err](CremaCoreImpl* s) { s->makeMapDone(eventId, "", err.empty() ? "no map data" : err); }); return; }
+        report({{"step", "drawing"}, {"bytes", (long long)body.size()}});
+        json doc = json::parse(body, nullptr, false);
+        if (!doc.is_object()) { withSelf(life, [eventId](CremaCoreImpl* s) { s->makeMapDone(eventId, "", "Overpass sent something that isn't map data"); }); return; }
+        auto feats = maptiles::featuresFromOverpass(doc);
+        doc = json();   // free the parsed answer before tiling
+        int lastPct = -1;
+        auto r = maptiles::buildPmtiles(feats, box, 12, 16, [&](int done, int total) {
+            const int pct = total ? done * 100 / total : 0;
+            if (pct / 10 != lastPct / 10) { lastPct = pct; report({{"tilesDone", done}, {"tilesTotal", total}}); }
+        });
+        if (!r.error.empty()) { withSelf(life, [eventId, e = r.error](CremaCoreImpl* s) { s->makeMapDone(eventId, "", e); }); return; }
+        std::error_code ec;
+        fs::create_directories(fs::path(out).parent_path(), ec);
+        { std::ofstream f(out, std::ios::binary | std::ios::trunc); f << r.bytes; }
+        fprintf(stderr, "[crema] made a map for %s: %zu features, %d tiles, %zu bytes\n", eventId.c_str(), feats.size(), r.tiles, r.bytes.size());
+        withSelf(life, [eventId, out](CremaCoreImpl* s) { s->makeMapDone(eventId, out, ""); });
+    }).detach();
+    return ok({{"started", true}, {"box", {box.w, box.s, box.e, box.n}}});
+} catch (const std::exception& e) { return fail(e.what()); }
+
+void CremaCoreImpl::makeMapDone(const std::string& eventId, const std::string& path, const std::string& error) {
+    if (!error.empty()) { m_making[eventId] = {{"step", "failed"}, {"error", error}}; publish(); return; }
+    m_making.erase(eventId);
+    const std::string r = importMap(eventId, path);   // the same path as an imported file: copy, hash, upload
+    json j = json::parse(r, nullptr, false);
+    if (!j.is_object() || !j.value("ok", false)) { m_making[eventId] = {{"step", "failed"}, {"error", j.is_object() ? j.value("error", r) : r}}; publish(); }
+    std::error_code ec; fs::remove(path, ec);   // importMap kept its own copy (named by sha256)
 }

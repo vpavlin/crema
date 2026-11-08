@@ -23,7 +23,11 @@ const HELLO_EVERY_MS = 5 * 60_000;
 export type Join = { eventId: string; organizer: string; secretHex: string; name: string };
 // The event's own map (docs/adr/0002): a .pmtiles file on Logos Storage, named (CID + sha256) in the
 // signed catalog, fetched through Loam's Storage and kept here. Never a tile server.
-export type MapState = { state: "none" | "no-storage" | "fetching" | "ready" | "failed"; path?: string; bytes?: number; total?: number; error?: string; sha256?: string; maxzoom?: number };
+export type MapState = {
+  state: "none" | "no-storage" | "fetching" | "ready" | "failed"; path?: string; bytes?: number; total?: number; error?: string; sha256?: string; maxzoom?: number;
+  // 0.3 progressive: pieces (one Storage block each) land in pieceDir as p0, p1, ...; the map page shows each zoom once its bytes are in
+  pieceDir?: string; piecesDone?: number; piecesTotal?: number; meta?: { size: number; dirEnd: number; minzoom: number; zoomEnds: number[][] };
+};
 
 export type CafeMode = { cafeId: string; secretHex: string; publicKey: string; name: string; eventName: string };
 
@@ -176,42 +180,95 @@ class Crema {
     const m = P.mapOf(g.state().catalog);
     if (!m || this.mapJobs.has(m.sha256)) return;
     this.mapJobs.add(m.sha256);
-    const dir = (FS.documentDirectory || "") + "maps/";
-    const final = dir + m.sha256 + ".pmtiles";
+    const root = (FS.documentDirectory || "") + "maps/";
     try {
-      await FS.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
-      const have = await FS.getInfoAsync(final);
-      if (have.exists && (have as any).size === m.size) { this.setMap(m.sha256, { state: "ready", path: final }); return; }
-      if (!(await storage.available())) {
-        this.setMap(m.sha256, { state: "no-storage", error: "The map comes over Logos Storage: install Loam and turn Storage on" });
-        return;
-      }
-      this.setMap(m.sha256, { state: "fetching", bytes: 0, total: m.size });
-      let job = await storage.fetch(m.cid, m.providers);
-      const t0 = Date.now();
-      while (job && job.state !== "done") {
-        if (job.state === "failed" || job.state === "cancelled") throw new Error(job.error || job.state);
-        if (Date.now() - t0 > 30 * 60_000) throw new Error("timed out");
-        this.setMap(m.sha256, { state: "fetching", bytes: job.bytes || 0, total: job.total || m.size });
-        await new Promise((r) => setTimeout(r, 2000));
-        job = await storage.status(m.cid);
-      }
-      if (!job) throw new Error("Loam's Storage did not answer");
-      const tmp = dir + m.sha256 + ".part";
-      await storage.saveTo(m.cid, tmp.replace(/^file:\/\//, ""));
-      // Loam knows CIDs only: the bytes must be the ones the organizer signed
-      const b64 = await FS.readAsStringAsync(tmp, { encoding: FS.EncodingType.Base64 });
-      const got = hexOf(sha256(new Uint8Array(Buffer.from(b64, "base64"))));
-      if (got !== m.sha256) { await FS.deleteAsync(tmp, { idempotent: true }); throw new Error("the downloaded map isn't the one the organizer signed"); }
-      await FS.moveAsync({ from: tmp, to: final });
-      crumb("map ready " + m.sha256.slice(0, 12) + " " + m.size + "B");
-      this.setMap(m.sha256, { state: "ready", path: final });
+      await FS.makeDirectoryAsync(root, { intermediates: true }).catch(() => {});
+      if (m.pieces) await this.fetchPieces(m, root);
+      else await this.fetchWhole(m, root);
     } catch (e: any) {
       crumb("map failed " + (e?.message || e));
-      this.setMap(m.sha256, { state: "failed", error: String(e?.message || e) });
+      this.setMap(m.sha256, { ...(this.maps.get(m.sha256) || {}), state: "failed", error: String(e?.message || e) });
     } finally {
       this.mapJobs.delete(m.sha256);
     }
+  }
+  // one CID through Loam's Storage into `path` (a file we own); relays drop circuits, so retry a few times
+  private async fetchCid(cid: string, providers: any[], path: string, onProgress?: (b: number) => void) {
+    let lastErr = "";
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        let job = await storage.fetch(cid, providers);
+        const t0 = Date.now();
+        while (job && job.state !== "done") {
+          if (job.state === "failed" || job.state === "cancelled") throw new Error(job.error || job.state);
+          if (Date.now() - t0 > 10 * 60_000) throw new Error("timed out");
+          if (onProgress) onProgress(job.bytes || 0);
+          await new Promise((r) => setTimeout(r, 1500));
+          job = await storage.status(cid);
+        }
+        if (!job) throw new Error("Loam's Storage did not answer");
+        await storage.saveTo(cid, path.replace(/^file:\/\//, ""));
+        return;
+      } catch (e: any) {
+        lastErr = String(e?.message || e);
+        crumb("piece " + cid.slice(-8) + " attempt " + (attempt + 1) + ": " + lastErr);
+        await new Promise((r) => setTimeout(r, Math.min(30_000, 3000 * (attempt + 1))));
+      }
+    }
+    throw new Error(lastErr || "fetch failed");
+  }
+  private async fetchWhole(m: any, root: string) {
+    const final = root + m.sha256 + ".pmtiles";
+    const have = await FS.getInfoAsync(final);
+    if (have.exists && (have as any).size === m.size) { this.setMap(m.sha256, { state: "ready", path: final }); return; }
+    if (!(await storage.available())) { this.setMap(m.sha256, { state: "no-storage", error: "The map comes over Logos Storage: install Loam and turn Storage on" }); return; }
+    this.setMap(m.sha256, { state: "fetching", bytes: 0, total: m.size });
+    const tmp = root + m.sha256 + ".part";
+    await this.fetchCid(m.cid, m.providers, tmp, (b) => this.setMap(m.sha256, { state: "fetching", bytes: b, total: m.size }));
+    const b64 = await FS.readAsStringAsync(tmp, { encoding: FS.EncodingType.Base64 });
+    if (hexOf(sha256(new Uint8Array(Buffer.from(b64, "base64")))) !== m.sha256) {
+      await FS.deleteAsync(tmp, { idempotent: true });
+      throw new Error("the downloaded map isn't the one the organizer signed");
+    }
+    await FS.moveAsync({ from: tmp, to: final });
+    this.setMap(m.sha256, { state: "ready", path: final });
+  }
+  // 0.3: pieces in file order (coarse zooms first); each shows on the map as soon as it lands
+  private async fetchPieces(m: any, root: string) {
+    const pc = m.pieces;
+    const dir = root + m.sha256 + "/";
+    await FS.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
+    const total = pc.cids.length;
+    const meta = { size: m.size, dirEnd: pc.dirEnd, minzoom: m.minzoom, zoomEnds: pc.zoomEnds };
+    const base = { pieceDir: dir, piecesTotal: total, meta, total: m.size };
+    const expect = (i: number) => Math.min(pc.size, m.size - i * pc.size);
+    let done = 0;
+    while (done < total) {
+      const info = await FS.getInfoAsync(dir + "p" + done);
+      if (!(info.exists && (info as any).size === expect(done))) break;
+      done++;
+    }
+    if (done < total && !(await storage.available())) {
+      this.setMap(m.sha256, { ...base, piecesDone: done, state: "no-storage", error: "The map comes over Logos Storage: install Loam and turn Storage on" });
+      return;
+    }
+    this.setMap(m.sha256, { ...base, piecesDone: done, state: done < total ? "fetching" : "ready" });
+    for (let i = done; i < total; i++) {
+      const path = dir + "p" + i;
+      await this.fetchCid(pc.cids[i], m.providers, path);
+      const info = await FS.getInfoAsync(path);
+      if (!info.exists || (info as any).size !== expect(i)) { await FS.deleteAsync(path, { idempotent: true }); throw new Error("piece " + (i + 1) + " has the wrong size"); }
+      crumb("map piece " + (i + 1) + "/" + total);
+      this.setMap(m.sha256, { ...base, piecesDone: i + 1, state: i + 1 < total ? "fetching" : "ready" });
+    }
+    // every piece is content-addressed by its signed CID; the whole file's sha256 is checked once more
+    const h = sha256.create();
+    for (let i = 0; i < total; i++) h.update(new Uint8Array(Buffer.from(await FS.readAsStringAsync(dir + "p" + i, { encoding: FS.EncodingType.Base64 }), "base64")));
+    if (hexOf(h.digest()) !== m.sha256) {
+      await FS.deleteAsync(dir, { idempotent: true });
+      throw new Error("the downloaded map isn't the one the organizer signed");
+    }
+    crumb("map verified " + m.sha256.slice(0, 12));
   }
   retryMap() { const g = this.game(); const m = g && P.mapOf(g.state().catalog); if (m) { this.maps.delete(m.sha256); this.ensureMap(g!); } }
 

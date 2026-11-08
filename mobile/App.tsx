@@ -138,10 +138,30 @@ function MapTab() {
     const cafes: MapCafe[] = (s.catalog?.cafes || []).map((c: any) => ({ n: c.name, a: c.address || "", lat: c.latE6 / 1e6, lon: c.lonE6 / 1e6, v: s.myVisited.has(c.id) }));
     return mapPage(cafes, map.maxzoom || 16);
   }, [s.catalog?.version, s.myVisited.size]);
-  useEffect(() => { setPageReady(false); setShown(""); }, [html]);
-  // the event's tiles: from our copy on disk into the page, in pieces (one huge injected string stalls the bridge)
+  const sent = useRef(0);   // pieces already in the page
+  useEffect(() => { setPageReady(false); setShown(""); sent.current = 0; }, [html]);
+  // 0.3 progressive: stream each piece into the page as it lands (begin once, then addPiece in order)
   useEffect(() => {
-    if (!pageReady || map.state !== "ready" || !map.path || shown === map.path) return;
+    if (!pageReady || !map.pieceDir || !map.meta) return;
+    const upTo = map.piecesDone || 0;
+    if (sent.current >= upTo) return;
+    let off = false;
+    (async () => {
+      try {
+        if (sent.current === 0) web.current?.injectJavaScript(`window.__crema.begin(${JSON.stringify(map.meta)});true;`);
+        while (!off && sent.current < upTo) {
+          const b64 = await FS.readAsStringAsync(map.pieceDir + "p" + sent.current, { encoding: FS.EncodingType.Base64 });
+          if (off) return;
+          web.current?.injectJavaScript(`window.__crema.addPiece(${JSON.stringify(b64)});true;`);
+          sent.current++;
+        }
+      } catch (e: any) { crumb("map piece inject " + (e?.message || e)); }
+    })();
+    return () => { off = true; };
+  }, [pageReady, map.pieceDir, map.piecesDone]);
+  // 0.2 catalogs: the whole file, from our copy on disk into the page, in pieces (one huge injected string stalls the bridge)
+  useEffect(() => {
+    if (map.pieceDir || !pageReady || map.state !== "ready" || !map.path || shown === map.path) return;
     let off = false;
     (async () => {
       try {
@@ -155,7 +175,9 @@ function MapTab() {
   const pct = map.total ? Math.floor(((map.bytes || 0) * 100) / map.total) : 0;
   return (
     <View style={{ flex: 1 }}>
-      {map.state === "fetching" && <Text style={st.mapNote}>Getting the event map over Logos Storage… {pct ? pct + " %" : ""}</Text>}
+      {map.state === "fetching" && <Text style={st.mapNote}>{map.piecesTotal
+        ? `Event map over Logos Storage: ${map.piecesDone || 0}/${map.piecesTotal}${(map.piecesDone || 0) > 0 ? " - zoom in for more as it arrives" : " - the first piece brings the overview"}`
+        : `Getting the event map over Logos Storage… ${pct ? pct + " %" : ""}`}</Text>}
       {map.state === "no-storage" && <Text style={st.mapNote}>{map.error}</Text>}
       {map.state === "failed" && <Pressable onPress={() => crema.retryMap()}><Text style={st.mapNote}>No map yet ({map.error}). Tap to try again.</Text></Pressable>}
       <WebView ref={web} originWhitelist={["*"]} source={{ html }} style={{ flex: 1, backgroundColor: C.bg }}

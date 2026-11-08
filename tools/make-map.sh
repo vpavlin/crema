@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # make-map.sh - draw an event's own map (vector tiles, one .pmtiles file) from OpenStreetMap DATA.
+# Prefer Basecamp: the studio's "Make map" does this inside crema_core (0.3.0+), no tools needed.
 #
 # We never download OSM's map tiles (their tile policy forbids bulk downloads). Instead: ONE Overpass
 # request for the raw data inside the event's box, then tilemaker renders vector tiles (OpenMapTiles

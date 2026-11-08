@@ -47,6 +47,8 @@ public:
     std::string importMap(std::string eventId, std::string path);
     // Drop the map from the draft (publish to take it off the phones)
     std::string removeMap(std::string eventId);
+    // Make the event map here: OpenStreetMap data for the cafés' area (+ marginM metres) -> our own vector tiles -> Storage. Runs in the background; progress in the snapshot
+    std::string makeMap(std::string eventId, std::string marginM);
 
 protected:
     void onContextReady() override;
@@ -82,7 +84,7 @@ private:
     void ensureStorage();
     void uploadMap(Ev& e);
     void onUploadDone(const std::string& payload);
-    void mapUploaded(const std::string& eventId, const std::string& cid);
+    void mapUploaded(const std::string& eventId, int idx, const std::string& cid);
     void pollStorage();
 
     std::recursive_mutex m_mtx;
@@ -97,5 +99,7 @@ private:
     // Logos Storage (the host's node; we never init() it)
     bool m_storageStarted = false, m_storageBusy = false;
     long long m_lastManifestPollMs = 0;
-    std::map<std::string, std::string> m_upSessions;   // upload session -> eventId
+    std::map<std::string, std::string> m_upSessions;   // upload session -> "eventId\tpieceIndex" (-1 = whole file)
+    std::map<std::string, crema::json> m_making;         // eventId -> {step, done, total, error} while a map is being made
+    void makeMapDone(const std::string& eventId, const std::string& path, const std::string& error);
 };

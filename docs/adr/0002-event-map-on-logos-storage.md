@@ -1,6 +1,6 @@
 # 0002 - The event map comes from Logos Storage, never a tile server
 
-Status: accepted, 2026-11-08 (vpavlin: "can we avoid hitting openstreetmaps ... fetch a few layers into
+Status: accepted, 2026-11-08; amended for 0.3.0 the same day (vpavlin: "can we avoid hitting openstreetmaps ... fetch a few layers into
 logos storage and serve it from the node of whoever is running the campaign?")
 
 ## Context
@@ -34,3 +34,32 @@ prefetch an event would need anyway.
   listed in `providers`. To be decided.
 - Street-name labels need glyph PBFs bundled with the app.
 - The Basecamp view does not draw the map yet (big-screen leaderboard only).
+
+## Amendment 0.3.0 (2026-11-08): made in the core, fetched in pieces
+
+**Make map in Basecamp.** `crema_core.makeMap(eventId, marginM)` does what `tools/make-map.sh` did, inside
+the module (no external programs; tilemaker can't ship in an .lgx): one Overpass request (JSON with
+geometry, only the features the style draws, ~22 MB for Brno; public mirrors tried in turn when one is
+busy) -> `maptiles.hpp` (Web Mercator, per-tile clipping, Douglas-Peucker by zoom, MVT 2.1, gzip, PMTiles
+v3, clustered). Same layers/classes as tilemaker's profile. Brno: 140-160 tiles, 1.3-1.5 MB, under a second.
+
+**Why pieces.** Measured between two NAT-ed nodes over a logos.test circuit relay: Storage moved 0 bytes.
+Two causes, both on the downloading side:
+1. the swarm-admission bug (fixed upstream by PR #1540; storage_module 3.0.2 still predates it; Loam's own
+   libstorage has the fix);
+2. libstorage asks for blocks in 128 KiB batches (`TargetBatchBytes`), and nim-libp2p's relay allows
+   128 KiB per circuit (`DefaultLimitData`): every multi-block batch overflows the circuit, which is
+   closed, and the same batch is retried forever. One-block CIDs fit: 21 x 60 KiB pieces of a 1.2 MB
+   file all arrived over the relay (16-90 s each), byte-identical. An upstream issue is drafted.
+
+**Pieces.** Besides the whole file (0.2 phones), the core uploads the map as 60 KiB pieces, each its own
+CID, and signs into the catalog `map.pieces` (CIDs in file order), `pieceSize`, `dirEnd`, `zoomEnds`
+([zoom, byte offset where that zoom is complete]) and `minzoom`. A clustered PMTiles file stores
+tiles by zoom, so any prefix holds the directory plus the coarse zooms: the phone fetches pieces in order
+through Loam, streams each into the map page, and raises the source's maxzoom as each zoom completes
+(MapLibre over-zooms the coarser tiles meanwhile). Brno: 1 piece = zoom 12 + 13 (a street-level
+overview), 7 = buildings (z14), 21 = full detail. CIDs are content-addressed and signed, and the whole
+file's sha256 is checked once all pieces are in. Imported unclustered files (tilemaker) still work, they
+only appear at the end.
+
+**Still open:** the reachable hub (cache-on-see, as Scala's) is the fast path; deferred by vpavlin.

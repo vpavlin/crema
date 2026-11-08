@@ -139,7 +139,17 @@ export function mapOf(catalog) {
   if (!Number.isInteger(m.size) || m.size <= 0 || m.size > 64 * 1024 * 1024) return null;
   if (!Array.isArray(m.bboxE6) || m.bboxE6.length !== 4 || !m.bboxE6.every(Number.isInteger)) return null;
   const providers = Array.isArray(m.providers) ? m.providers.filter((p) => p && typeof p.peerId === "string" && Array.isArray(p.addrs)).slice(0, 8) : [];
-  return { cid: m.cid, sha256: m.sha256, size: m.size, bboxE6: m.bboxE6, maxzoom: Number.isInteger(m.maxzoom) ? m.maxzoom : 16, providers };
+  const out = { cid: m.cid, sha256: m.sha256, size: m.size, bboxE6: m.bboxE6, minzoom: Number.isInteger(m.minzoom) ? m.minzoom : 0,
+    maxzoom: Number.isInteger(m.maxzoom) ? m.maxzoom : 16, providers, pieces: null };
+  // 0.3: the same file as one-block pieces (they cross circuit relays) + where each zoom is complete
+  const okCid = (c) => typeof c === "string" && /^[A-Za-z0-9]{20,120}$/.test(c);
+  if (Array.isArray(m.pieces) && m.pieces.length > 0 && m.pieces.length <= 200 && m.pieces.every(okCid)
+      && Number.isInteger(m.pieceSize) && m.pieceSize > 0 && m.pieceSize * m.pieces.length >= m.size && m.pieceSize * (m.pieces.length - 1) < m.size
+      && Number.isInteger(m.dirEnd) && m.dirEnd > 0 && m.dirEnd <= m.size
+      && Array.isArray(m.zoomEnds) && m.zoomEnds.every((z) => Array.isArray(z) && z.length === 2 && z.every(Number.isInteger) && z[1] <= m.size)) {
+    out.pieces = { cids: m.pieces, size: m.pieceSize, dirEnd: m.dirEnd, zoomEnds: m.zoomEnds };
+  }
+  return out;
 }
 
 // Query strings without URLSearchParams (React Native's lacks get())

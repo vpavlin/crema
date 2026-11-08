@@ -142,6 +142,17 @@ Item {
         onAccepted: root.act("importMap", [root.ev.eventId, String(selectedFile)], "Map imported - uploading to Logos Storage")
     }
     readonly property var draftMap: ev && ev.draft && ev.draft.map ? ev.draft.map : null
+    readonly property var making: ev && ev.mapMaking ? ev.mapMaking : null
+    function mapBadge() {
+        if (root.making) return root.making.step === "failed" ? "Couldn't make it" : (root.making.step === "drawing" ? "Drawing…" : "Downloading…");
+        if (!root.draftMap) return "";
+        return root.draftMap.state === "ready" ? "On Logos Storage" : "Uploading " + (root.draftMap.piecesDone || 0) + "/" + (root.draftMap.piecesTotal || "?");
+    }
+    function makingText() {
+        var k = root.making;
+        if (k.step === "drawing") return "Drawing the tiles" + (k.tilesTotal ? ": " + k.tilesDone + " of " + k.tilesTotal : "…") + " (" + root.mb(k.bytes) + " of OpenStreetMap data)";
+        return "Downloading OpenStreetMap data for the cafés' area" + (k.bytes ? ": " + root.mb(k.bytes) : "…") + " - usually under a minute";
+    }
     function mb(b) { return (Number(b || 0) / 1048576).toFixed(1) + " MB"; }
 
     // ── building blocks ──
@@ -312,26 +323,36 @@ Item {
                             Layout.fillWidth: true; spacing: 8
                             Text { text: "Event map"; color: root.cText; font.pixelSize: 16; font.bold: true; textFormat: Text.PlainText }
                             Rectangle {
-                                visible: !!root.draftMap; implicitWidth: ms.implicitWidth + 16; implicitHeight: 22; radius: 11
-                                color: root.draftMap && root.draftMap.state === "ready" ? "#24331d" : "#3a2a12"
+                                visible: !!root.draftMap || !!root.making; implicitWidth: ms.implicitWidth + 16; implicitHeight: 22; radius: 11
+                                color: root.making && root.making.step === "failed" ? "#3a1c16" : (root.draftMap && root.draftMap.state === "ready" && !root.making ? "#24331d" : "#3a2a12")
                                 Text { id: ms; anchors.centerIn: parent; font.pixelSize: 11; textFormat: Text.PlainText
-                                       color: root.draftMap && root.draftMap.state === "ready" ? root.cGood : root.cCrema
-                                       text: !root.draftMap ? "" : (root.draftMap.state === "ready" ? "On Logos Storage" : "Uploading…") }
+                                       color: root.making && root.making.step === "failed" ? root.cBad : (root.draftMap && root.draftMap.state === "ready" && !root.making ? root.cGood : root.cCrema)
+                                       text: root.mapBadge() }
                             }
                             Item { Layout.fillWidth: true }
-                            CButton { label: root.draftMap ? "Replace" : "Import map"; onClicked: mapDialog.open() }
+                            CButton { label: root.draftMap ? "Make again" : "Make map"; primary: !root.draftMap
+                                      active: !(root.making && root.making.step !== "failed") && root.draftCafes.length > 0
+                                      onClicked: root.act("makeMap", [root.ev.eventId, "500"], "Making the map - downloading OpenStreetMap data for the cafés' area") }
+                            CButton { label: "Import file"; onClicked: mapDialog.open() }
                             CButton { label: "Remove"; danger: true; visible: !!root.draftMap; onClicked: root.act("removeMap", [root.ev.eventId], "Map removed (publish to apply)") }
                         }
                         Label2 {
                             Layout.fillWidth: true; wrapMode: Text.WordWrap
-                            text: !root.draftMap
-                                  ? "Phones draw the map from tiles you provide - no map servers. Make a .pmtiles file for the event area with tools/make-map.sh (from OpenStreetMap data), then import it here: it goes on Logos Storage and the next publish signs it in."
-                                  : root.mb(root.draftMap.size) + " · zoom up to " + root.draftMap.maxzoom
-                                    + (root.draftMap.cid ? " · CID " + String(root.draftMap.cid).slice(0, 14) + "…" : "")
-                                    + (root.draftMap.state === "ready" ? ((root.ev.catalog && root.ev.catalog.map && root.ev.catalog.map.cid === root.draftMap.cid) ? " · published" : " · publish to send it to the players") : "")
+                            text: root.making && root.making.step !== "failed" ? root.makingText()
+                                  : !root.draftMap
+                                  ? "Phones draw the map from tiles made here - no map servers. Make map downloads OpenStreetMap data for the cafés' area (500 m around them), draws our own vector tiles and puts them on Logos Storage in small pieces, so phones show a coarse map within seconds and sharpen it as more arrives. Or import a .pmtiles file."
+                                  : root.mb(root.draftMap.size) + " · zoom " + (root.draftMap.minzoom !== undefined ? root.draftMap.minzoom + "-" : "") + root.draftMap.maxzoom
+                                    + (root.draftMap.piecesTotal ? " · " + root.draftMap.piecesDone + "/" + root.draftMap.piecesTotal + " pieces on Storage" : "")
+                                    + (root.draftMap.state === "ready" ? ((root.ev.catalog && root.ev.catalog.map && root.ev.catalog.map.sha256 === root.draftMap.sha256) ? " · published" : " · publish to send it to the players") : "")
                         }
-                        Text { visible: !!(root.draftMap && root.draftMap.error); Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.cBad; font.pixelSize: 12; textFormat: Text.PlainText
-                               text: root.draftMap && root.draftMap.error ? root.draftMap.error : "" }
+                        Rectangle {
+                            visible: !!(root.draftMap && root.draftMap.state === "uploading" && root.draftMap.piecesTotal)
+                            Layout.fillWidth: true; implicitHeight: 6; radius: 3; color: root.cLine
+                            Rectangle { height: parent.height; radius: 3; color: root.cCrema
+                                        width: root.draftMap && root.draftMap.piecesTotal ? parent.width * root.draftMap.piecesDone / root.draftMap.piecesTotal : 0 }
+                        }
+                        Text { visible: !!((root.draftMap && root.draftMap.error) || (root.making && root.making.error)); Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.cBad; font.pixelSize: 12; textFormat: Text.PlainText
+                               text: root.making && root.making.error ? root.making.error : (root.draftMap && root.draftMap.error ? root.draftMap.error : "") }
                     }
                 }
                 // cafés

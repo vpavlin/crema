@@ -82,10 +82,20 @@ test("the event map: mapOf accepts the signed shape, rejects junk, and the signa
   const org = C.newKey();
   const map = { cid: "zDvZRwzm4Hh6V1J3XHxi2k9NkmRoyGcMcbBzgzaD3ZHAYXZ2AGAk", sha256: "ab".repeat(32), size: 1000, bboxE6: [16593000, 49176700, 16636100, 49215600], maxzoom: 16 };
   const c = C.signCatalog({ v: 1, eventId: "e", version: 1, cafes: [], map }, org.secretKey);
-  assert.deepEqual(C.mapOf(c), { ...map, providers: [] });
+  assert.deepEqual(C.mapOf(c), { ...map, minzoom: 0, providers: [], pieces: null });
   assert.equal(C.mapOf({ map: { ...map, sha256: "nope" } }), null);
   assert.equal(C.mapOf({ map: { ...map, bboxE6: [1.5, 2, 3, 4] } }), null);
   assert.equal(C.mapOf({}), null);
   assert.ok(C.verifyCatalog(c, org.publicKey));
   assert.ok(!C.verifyCatalog({ ...c, map: { ...map, cid: "zDvSwapped" + map.cid.slice(10) } }, org.publicKey), "a swapped map CID breaks the signature");
+});
+
+test("the event map in pieces: valid pieces are exposed, inconsistent ones ignored (the whole file still works)", () => {
+  const base = { cid: "zDvZRwzm4Hh6V1J3XHxi2k9NkmRoyGcMcbBzgzaD3ZHAYXZ2AGAk", sha256: "ab".repeat(32), size: 130000, bboxE6: [1, 2, 3, 4], minzoom: 12, maxzoom: 16 };
+  const pcs = ["zDvZRwzmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA1", "zDvZRwzmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2", "zDvZRwzmAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3"];
+  const m = C.mapOf({ map: { ...base, pieces: pcs, pieceSize: 61440, dirEnd: 1400, zoomEnds: [[12, 20000], [13, 70000], [16, 130000]] } });
+  assert.deepEqual(m.pieces, { cids: pcs, size: 61440, dirEnd: 1400, zoomEnds: [[12, 20000], [13, 70000], [16, 130000]] });
+  assert.equal(m.minzoom, 12);
+  assert.equal(C.mapOf({ map: { ...base, pieces: pcs.slice(0, 2), pieceSize: 61440, dirEnd: 1400, zoomEnds: [] } }).pieces, null, "too few pieces for the size");
+  assert.equal(C.mapOf({ map: { ...base, pieces: pcs, pieceSize: 61440, dirEnd: 1400, zoomEnds: [[12, 999999]] } }).pieces, null, "a zoom ending past the file");
 });

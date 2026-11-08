@@ -1,6 +1,6 @@
 {
  "name": "crema_core",
- "version": "0.2.0",
+ "version": "0.3.0",
  "type": "core",
  "interface": "universal",
  "category": "social",
@@ -14,10 +14,14 @@
  "nix": {
   "packages": {
    "build": [
-    "openssl"
+    "openssl",
+    "curlMinimal",
+    "zlib"
    ],
    "runtime": [
-    "openssl"
+    "openssl",
+    "curlMinimal",
+    "zlib"
    ]
   },
   "external_libraries": [],

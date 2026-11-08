@@ -67,11 +67,40 @@ cafes.forEach(function(c){
 });
 if(pts.length){var bb=pts.reduce(function(a,p){return[[Math.min(a[0][0],p[0]),Math.min(a[0][1],p[1])],[Math.max(a[1][0],p[0]),Math.max(a[1][1],p[1])]];},[pts[0],pts[0]]);
   m.fitBounds(bb,{padding:40,maxZoom:16,duration:0});}
+// progressive (0.3): the map file arrives as Storage pieces in file order; a PMTiles prefix holds the
+// directories and the coarse zooms, so each zoom shows as soon as its bytes are in
+var P=null,have=0,buf=null,availZ=-1,proto=null;
+function styleUpTo(z){var st=JSON.parse(JSON.stringify(STYLE_TILES));
+  st.sources.crema={type:'vector',tiles:['pmtiles://crema/{z}/{x}/{y}'],minzoom:P.minzoom,maxzoom:z,attribution:'© OpenStreetMap contributors'};return st;}
+function refresh(){
+  if(!P||have<P.dirEnd)return;
+  var z=-1;P.zoomEnds.forEach(function(e){if(e[1]<=have&&e[0]>z)z=e[0];});
+  if(z<0||z<=availZ)return;
+  if(!proto){
+    var src={getKey:function(){return 'crema';},getBytes:function(o,l){
+      if(o+l<=have)return Promise.resolve({data:buf.buffer.slice(o,o+l)});
+      if(o===0)return Promise.resolve({data:buf.buffer.slice(0,have)});   // the first read asks for 16 KiB up front
+      return Promise.reject(new Error('not here yet'));}};
+    proto=new pmtiles.Protocol();maplibregl.addProtocol('pmtiles',proto.tile);proto.add(new pmtiles.PMTiles(src));
+  }
+  var first=availZ<0;availZ=z;
+  if(first){m.setStyle(styleUpTo(z));}
+  else{   // swapping the style again (a changed source) leaves the map blank: raise maxzoom on the live source
+    var s=m.getSource('crema');
+    if(s){s.maxzoom=z;if(s._options)s._options.maxzoom=z;s.setTiles(['pmtiles://crema/{z}/{x}/{y}']);}
+  }
+  post({t:'zoom',z:z,have:have});
+}
 // the event's tiles, from React Native in base64 pieces
 var parts=[];
 window.__crema={
   note:note,
   addChunk:function(s){parts.push(s);},
+  begin:function(meta){P=meta;buf=new Uint8Array(meta.size);have=0;availZ=-1;},
+  addPiece:function(b64){
+    try{var bin=atob(b64);if(!P||have+bin.length>buf.length)return;for(var i=0;i<bin.length;i++)buf[have+i]=bin.charCodeAt(i);have+=bin.length;refresh();}
+    catch(e){note('Map failed: '+e);post({t:'map',ok:false,error:String(e)});}
+  },
   mapReady:function(){
     try{
       var bin=atob(parts.join(''));parts=[];var buf=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
