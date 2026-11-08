@@ -1,0 +1,18 @@
+{
+  "name": "crema",
+  "display_name": "Crema - Coffee Passport",
+  "version": "0.1.0",
+  "type": "ui_qml",
+  "category": "social",
+  "description": "Coffee passport for a city's best cafés, on Logos. Organizers create an event, give each café its own key and publish a signed café list; players collect stamps with the Crema phone app by scanning each café's rotating code. Live leaderboard and café mode. Pure-QML view over the crema_core module.",
+  "view": "Main.qml",
+  "icon": "icon.png",
+  "dependencies": [
+    "crema_core"
+  ],
+  "nix": {
+    "packages": { "build": [], "runtime": [] },
+    "external_libraries": [],
+    "cmake": { "find_packages": [], "extra_sources": [], "extra_include_dirs": [], "extra_link_libraries": [] }
+  }
+}

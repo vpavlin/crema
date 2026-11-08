@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" rx="56" fill="#1d1410"/>
+  <!-- stamp ring -->
+  <circle cx="128" cy="124" r="96" fill="none" stroke="#d9a066" stroke-width="6" stroke-dasharray="14 9"/>
+  <!-- saucer -->
+  <ellipse cx="122" cy="178" rx="70" ry="12" fill="#3a2a20"/>
+  <!-- cup -->
+  <path d="M66 104 h112 v28 a56 50 0 0 1 -112 0 z" fill="#f3e7da"/>
+  <path d="M178 112 a22 20 0 1 1 0 40" fill="none" stroke="#f3e7da" stroke-width="11"/>
+  <!-- crema surface -->
+  <ellipse cx="122" cy="104" rx="56" ry="12" fill="#d9a066"/>
+  <ellipse cx="122" cy="104" rx="30" ry="6" fill="#b5793d"/>
+  <!-- steam -->
+  <path d="M104 86 c-10 -14 10 -20 0 -36 M128 84 c-10 -14 10 -20 0 -36 M152 86 c-10 -14 10 -20 0 -36" fill="none" stroke="#d9a066" stroke-width="6" stroke-linecap="round"/>
+</svg>

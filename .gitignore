@@ -3,3 +3,6 @@ node_modules/
 web/dist/
 mobile/build-unsigned-apk.log
 crema_core/test/cpp-frame.b64
+scripts/qml-harness/harness
+scripts/qml-harness/harness.moc
+scripts/qml-harness/harness.env
