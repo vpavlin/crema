@@ -171,3 +171,21 @@ test("state survives a restart", () => {
   assert.equal(again.state().leaderboard.length, 1);
   assert.equal(again.state().catalog.version, 1);
 });
+
+test("cached signature checks: an altered copy of a verified event (same id) is still rejected; state() is cached until something changes", () => {
+  const now = () => T0;
+  const g = new CremaGame({ join, playerSecretHex: newPlayerSecret(), now });
+  const other = new CremaGame({ join, playerSecretHex: newPlayerSecret(), now });
+  for (const f of new CremaGame({ join, playerSecretHex: newPlayerSecret(), now }).publishCatalog(catalog(1)).out) g.receive(f);
+  const named = other.setName("Bob").out[0];
+  assert.equal(g.receive(named).changed, true);
+  const s1 = g.state();
+  assert.equal(g.state(), s1, "same object while nothing changed");
+  // forge: same event id, different payload, the original signature
+  const ev = other.log.find((e) => e.type === "profile");
+  const forged = { ...ev, payload: { name: "Mallory" } };
+  assert.equal(g.admit(forged), false, "the altered copy fails even though the original was verified and cached");
+  assert.equal(g.state().names.get(other.author), "Bob");
+  g.setShare(false);
+  assert.notEqual(g.state(), s1, "a change makes a fresh state");
+});

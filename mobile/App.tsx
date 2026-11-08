@@ -33,6 +33,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>("passport");
   const [toast, setToast] = useState<{ text: string; good: boolean } | null>(null);
   const [cafeOn, setCafeOn] = useState(false);
+  const [mapSeen, setMapSeen] = useState(false);
+  useEffect(() => { if (tab === "map") setMapSeen(true); }, [tab]);
   useEffect(() => { c.boot().finally(() => setReady(true)); }, []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 5000); return () => clearTimeout(t); }, [toast]);
 
@@ -76,7 +78,8 @@ export default function App() {
         {!ready ? <Text style={st.muted}>Starting…</Text> : !g ? <Welcome onScan={scan} onLink={openLink} /> : (
           <View style={{ flex: 1 }}>
             {tab === "passport" && <Passport />}
-            {tab === "map" && <MapTab />}
+            {/* the map stays alive once opened: re-creating it re-parses MapLibre and re-feeds every piece */}
+            {mapSeen ? <View style={{ flex: 1, display: tab === "map" ? "flex" : "none" }}><MapTab /></View> : null}
             {tab === "board" && <Board />}
             {tab === "me" && <Me onCafe={() => setCafeOn(true)} onLink={openLink} />}
           </View>

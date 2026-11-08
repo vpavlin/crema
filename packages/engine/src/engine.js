@@ -29,26 +29,47 @@ const NAME_MAX = 40;
 export const stampId = (author, cafeId, step) => `st-${author}-${cafeId}-${step}`;
 export const catalogId = (version) => `cat-${String(version).padStart(8, "0")}`;
 
+// ── signature checks, remembered ──
+// On a phone (Hermes, pure-JS crypto) one verification costs tens of ms, and the fold runs them all;
+// re-verifying on every render froze the UI for seconds. A signature's validity never changes, so
+// remember it - keyed by the FULL content (never just the id: same id + altered payload must re-check).
+const VERIFIED = new Map();
+function remember(key, fn) {
+  const hit = VERIFIED.get(key);
+  if (hit !== undefined) return hit;
+  const v = !!fn();
+  if (VERIFIED.size > 50000) VERIFIED.clear();
+  VERIFIED.set(key, v);
+  return v;
+}
+function trustRestored(e, join) {
+  if (!e || typeof e !== "object") return;
+  if (e.type === "catalog" && e.payload?.catalog) VERIFIED.set("cat\u0000" + join.organizer + "\u0000" + JSON.stringify(e.payload.catalog), true);
+  else if (e.type === "stamp" || e.type === "profile") VERIFIED.set("ev\u0000" + JSON.stringify(e), true);
+}
+const eventSigOk = (e) => remember("ev\u0000" + JSON.stringify(e), () => verifyEvent(P.DOMAIN, e));
+
 // ── validity (the fold's admission rules; every device applies the same) ──
 export function validCatalogEvent(e, join) {
   if (!e || e.type !== "catalog" || !e.payload || typeof e.payload !== "object") return null;
   const c = e.payload.catalog;
   if (!c || c.eventId !== join.eventId || !Number.isInteger(c.version) || e.id !== catalogId(c.version)) return null;
-  return P.verifyCatalog(c, join.organizer) ? c : null;
+  return remember("cat\u0000" + join.organizer + "\u0000" + JSON.stringify(c), () => P.verifyCatalog(c, join.organizer)) ? c : null;
 }
 export function validStamp(e, catalog) {
-  if (!e || e.type !== "stamp" || !catalog || !verifyEvent(P.DOMAIN, e)) return false;
+  if (!e || e.type !== "stamp" || !catalog || !eventSigOk(e)) return false;
   const p = e.payload || {};
   if (typeof p.cafeId !== "string" || !Number.isInteger(p.step) || typeof p.cafeSig !== "string") return false;
   if (e.id !== stampId(e.dev, p.cafeId, p.step)) return false;
   const cafe = catalog.cafes.find((c) => c.id === p.cafeId);
-  if (!cafe || !P.verifyStampSig(p.cafeId, p.step, p.cafeSig, cafe.pubkey)) return false;
+  if (!cafe || !remember("cafe\u0000" + p.cafeId + "\u0000" + p.step + "\u0000" + p.cafeSig + "\u0000" + cafe.pubkey,
+    () => P.verifyStampSig(p.cafeId, p.step, p.cafeSig, cafe.pubkey))) return false;
   const t = P.stepTimeMs(p.step);
   if (t < catalog.start || t > catalog.end) return false;
   return Math.abs(e.hlc.wall - t) <= CLAIM_LATE_MS;
 }
 function validProfile(e) {
-  return e && e.type === "profile" && verifyEvent(P.DOMAIN, e) && typeof e.payload?.name === "string" && e.payload.name.length <= NAME_MAX;
+  return e && e.type === "profile" && typeof e.payload?.name === "string" && e.payload.name.length <= NAME_MAX && eventSigOk(e);
 }
 
 // ── the fold ──
@@ -92,11 +113,15 @@ export class CremaGame {
     this.group = deriveIdentity(fromHex(join.secretHex), P.DOMAIN);
     this.topic = topicFor(this.group, P.DOMAIN);
     this.log = [];
+    this.rev = 0;                                // bumps on every change the fold could see
+    this.memo = null;
     this.privateStamps = [];                     // stamps of a player not on the leaderboard
     this.share = true;                           // on the leaderboard?
     this.clock = new Clock(this.author, now);
     if (state) {
-      for (const e of state.log || []) this.admit(e);
+      // our own saved log: every event in it passed admit() before it was saved, so don't re-run the
+      // crypto at start (seconds on a phone) - only mark it known-good. Network events are always checked.
+      for (const e of state.log || []) { trustRestored(e, join); this.admit(e); }
       this.privateStamps = state.privateStamps || [];
       this.share = state.share !== false;
     }
@@ -108,14 +133,21 @@ export class CremaGame {
   admit(e) {
     if (!e || typeof e.id !== "string" || !e.hlc) return false;
     if (e.type === "catalog") { if (!validCatalogEvent(e, this.join)) return false; }
-    else if (e.type === "stamp" || e.type === "profile") { if (!verifyEvent(P.DOMAIN, e)) return false; }
+    else if (e.type === "stamp" || e.type === "profile") { if (!eventSigOk(e)) return false; }
     else return false;
     const added = mergeOne(this.log, e);
-    if (added) this.clock.receive(e.hlc);
+    if (added) { this.clock.receive(e.hlc); this.rev++; }
     return added;
   }
 
+  // The folded state, cached until the log / private stamps / sharing change (rev). Treat as read-only.
   state() {
+    if (this.memo && this.memo.rev === this.rev) return this.memo.s;
+    const s = this.foldNow();
+    this.memo = { rev: this.rev, s };
+    return s;
+  }
+  foldNow() {
     const s = fold(this.log, this.join, this.author);
     if (!this.share && s.catalog) {
       // my private stamps count for me, never for the shared leaderboard
@@ -169,7 +201,7 @@ export class CremaGame {
       payload: { cafeId: checked.cafe.id, step: checked.step, cafeSig: checked.sig },
     });
     if (!this.share) {
-      if (!this.privateStamps.some((x) => x.id === e.id)) this.privateStamps.push(e);
+      if (!this.privateStamps.some((x) => x.id === e.id)) { this.privateStamps.push(e); this.rev++; }
       return { ok: true, cafe: checked.cafe, already, out: [] };
     }
     this.admit(e);
@@ -192,6 +224,7 @@ export class CremaGame {
       this.privateStamps = [];
     }
     this.share = !!on;
+    this.rev++;
     return { ok: true, out };
   }
 

@@ -71,6 +71,7 @@ class Crema {
       }
       this.current = idx.current && this.games.has(idx.current) ? idx.current : ([...this.games.keys()][0] || "");
       crumb("boot events=" + this.games.size);
+      if (this.game()) this.mapFor(this.game());   // keep fetching the map from where it stopped, whatever tab is open
       this.emit();
       await this.startTransport();
     })();
@@ -114,7 +115,7 @@ class Crema {
       if (r.out.length) this.publish(g, r.out);
       changed = changed || r.changed;
     }
-    if (changed) { this.saveGame(g); this.emit(); }
+    if (changed) { this.saveGame(g); this.emit(); if (g === this.game()) this.mapFor(g); }   // a new catalog may bring a map: start fetching now
     return changed;
   }
 
@@ -273,6 +274,11 @@ class Crema {
       if (!(info.exists && (info as any).size === expect(done))) break;
       done++;
     }
+    const okFile = dir + "verified";
+    if (done === total && (await FS.getInfoAsync(okFile)).exists) {   // checked on an earlier run: no need to hash 1-6 MB again
+      this.setMap(m.sha256, { ...base, piecesDone: total, state: "ready" });
+      return;
+    }
     if (done < total && !(await storage.available())) {
       this.setMap(m.sha256, { ...base, piecesDone: done, state: "no-storage", error: "The map comes over Logos Storage: install Loam and turn Storage on" });
       return;
@@ -293,6 +299,7 @@ class Crema {
       await FS.deleteAsync(dir, { idempotent: true });
       throw new Error("the downloaded map isn't the one the organizer signed");
     }
+    await FS.writeAsStringAsync(okFile, m.sha256).catch(() => {});
     crumb("map verified " + m.sha256.slice(0, 12));
   }
   retryMap() { const g = this.game(); const m = g && P.mapOf(g.state().catalog); if (m) { this.maps.delete(m.sha256); this.ensureMap(g!); } }
