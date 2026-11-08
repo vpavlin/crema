@@ -1,0 +1,75 @@
+# Build Crema's linux-arm64 packages on a GitHub ARM runner and attach them to a release, so they
+# can be merged into the linux-amd64 packages (one .lgx per module, both platforms inside).
+#
+# Runs on a push of a tag `arm64-*` (git tag arm64-0.1.0 && git push origin arm64-0.5.5), or by hand.
+# The release `<tag>` gets crema_core-linux-arm64.lgx, crema-linux-arm64.lgx and the build logs.
+#
+# ARMv8.0 (Pi 3/4, MT8183 Chromebooks like the Lenovo Duet) has no LSE atomics: the build checks the
+# plugin has no inline LSE instructions, which would SIGILL there.
+name: arm64 packages
+
+on:
+  push:
+    tags: ["arm64-*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4
+      - uses: DeterminateSystems/nix-installer-action@9383ce2bf08796b65508822f5982f49151badc4e   # main, 2026-10-30
+        with:
+          extra-conf: |
+            extra-substituters = https://cache.nix.logos.co/public
+            extra-trusted-public-keys = public:Z1wyVBEx8PHbXujYB52Mysv9Rd8rWIhyQ3bQyef9yy4=
+            accept-flake-config = true
+      - name: Build
+        shell: bash
+        run: |
+          set -u -o pipefail
+          mkdir -p out logs
+          ok=1
+          for m in crema_core:crema_core crema:module; do
+            name=${m%%:*}; dir=${m#*:}
+            if (cd "$dir" && nix build --accept-flake-config .#lgx-portable -o "$GITHUB_WORKSPACE/res-$name") > "logs/$name.log" 2>&1; then
+              cp -L res-$name/*.lgx "out/$name-linux-arm64.lgx"; echo "$name OK"
+            else
+              echo "$name FAILED"; tail -80 "logs/$name.log"; ok=0
+            fi
+          done
+          [ $ok = 1 ]
+      - name: No inline LSE atomics (ARMv8.0)
+        shell: bash
+        run: |
+          set -eu
+          mkdir x && tar -xzf out/crema_core-linux-arm64.lgx -C x
+          ls x/variants
+          n=0
+          for so in x/variants/*/*.so*; do
+            c=$(objdump -d "$so" | awk '/^[0-9a-f]+ <.*>:$/ {fn=$2} /\t(cas|casa|casl|casal|swp|swpa|swpl|swpal|ldadd|ldadda|ldaddl|ldaddal|ldclr|ldset|ldeor)[bh]?\t/ && fn !~ /__aarch64_/ {print}' | wc -l)
+            echo "$so: $c inline LSE instructions"
+            case "$so" in *_plugin.so) n=$((n + c));; esac
+          done
+          # the plugin must have none; prebuilt libraries (OpenSSL) are reported here and
+          # checked by running under QEMU's cortex-a53 before a release
+          [ "$n" = 0 ] || { echo "the plugin would SIGILL on ARMv8.0"; exit 1; }
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65   # v2
+        # always: a failed build's logs land on the release too (readable without a GitHub login)
+        if: always() && startsWith(github.ref, 'refs/tags/')
+        with:
+          fail_on_unmatched_files: false
+          files: |
+            out/*.lgx
+            logs/*.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02   # v4
+        if: always()
+        with:
+          name: crema-linux-arm64
+          path: |
+            out/
+            logs/
