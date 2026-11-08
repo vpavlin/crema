@@ -1,0 +1,30 @@
+{
+ "name": "crema_core",
+ "version": "0.1.0",
+ "type": "core",
+ "interface": "universal",
+ "category": "social",
+ "display_name": "Crema",
+ "description": "Crema coffee passport core: organizer studio (events, café keys, signed café list), café stamp QR, and the live leaderboard. Folds the same event log as the Crema phone app over loam_core (plain relay + RBSR catch-up). Runs headless under logosctl and behind the crema view (Basecamp 0.3).",
+ "main": "crema_core_plugin",
+ "dependencies": [
+  "loam_core"
+ ],
+ "nix": {
+  "packages": {
+   "build": [
+    "openssl"
+   ],
+   "runtime": [
+    "openssl"
+   ]
+  },
+  "external_libraries": [],
+  "cmake": {
+   "find_packages": [],
+   "extra_sources": [],
+   "extra_include_dirs": [],
+   "extra_link_libraries": []
+  }
+ }
+}
