@@ -3,7 +3,7 @@
     "name": "Crema",
     "slug": "crema",
     "scheme": "crema",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "orientation": "portrait",
     "platforms": ["android"],
     "icon": "./assets/icon.png",
@@ -11,7 +11,7 @@
     "backgroundColor": "#1d1410",
     "android": {
       "package": "xyz.vpavlin.crema",
-      "versionCode": 4,
+      "versionCode": 5,
       "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#1d1410" },
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO",

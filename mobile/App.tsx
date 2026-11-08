@@ -3,7 +3,7 @@
 // computed on this phone from signed stamps.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import * as FS from "expo-file-system/legacy";
-import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { Alert, FlatList, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import { WebView } from "react-native-webview";
@@ -35,9 +35,10 @@ export default function App() {
   useEffect(() => { c.boot().finally(() => setReady(true)); }, []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 5000); return () => clearTimeout(t); }, [toast]);
 
-  async function scan() {
+  // one way in for every code: a scanned QR, a pasted link, or a crema: link opened from another app
+  async function openLink(text: string) {
     try {
-      const text = await scanQr("Scan a café's Crema code, or an event's join code");
+      text = (text || "").trim();
       if (!text) return;
       setToast({ text: "Checking…", good: true });
       const r = await c.handleScan(text, () => locationFix());
@@ -45,6 +46,18 @@ export default function App() {
       if (r.kind === "cafe" && r.ok) setCafeOn(true);
     } catch (e: any) { setToast({ text: String(e?.message || e), good: false }); }
   }
+  async function scan() {
+    try {
+      const text = await scanQr("Scan a café's Crema code, or an event's join code");
+      if (text) await openLink(text);
+    } catch (e: any) { setToast({ text: String(e?.message || e), good: false }); }
+  }
+  useEffect(() => {
+    if (!ready) return;
+    Linking.getInitialURL().then((u) => { if (u && u.startsWith("crema:")) openLink(u); }).catch(() => {});
+    const sub = Linking.addEventListener("url", (e) => { if (e.url && e.url.startsWith("crema:")) openLink(e.url); });
+    return () => sub.remove();
+  }, [ready]);
 
   if (cafeOn && c.cafe) return <CafeMode onExit={() => setCafeOn(false)} />;
   const g = c.game();
@@ -59,12 +72,12 @@ export default function App() {
           <Text style={st.event} numberOfLines={1}>{s?.eventName || ""}</Text>
         </View>
         {c.net.started ? <SharedNodeStatus appName="Crema" /> : null}
-        {!ready ? <Text style={st.muted}>Starting…</Text> : !g ? <Welcome onScan={scan} /> : (
+        {!ready ? <Text style={st.muted}>Starting…</Text> : !g ? <Welcome onScan={scan} onLink={openLink} /> : (
           <View style={{ flex: 1 }}>
             {tab === "passport" && <Passport />}
             {tab === "map" && <MapTab />}
             {tab === "board" && <Board />}
-            {tab === "me" && <Me onCafe={() => setCafeOn(true)} />}
+            {tab === "me" && <Me onCafe={() => setCafeOn(true)} onLink={openLink} />}
           </View>
         )}
         {toast ? <View style={[st.toast, { backgroundColor: toast.good ? C.good : C.bad }]}><Text style={st.toastText}>{toast.text}</Text></View> : null}
@@ -86,13 +99,29 @@ function NavBtn({ label, on, onPress }: { label: string; on: boolean; onPress: (
   return <Pressable style={[st.navBtn, on && st.navOn]} onPress={onPress}><Text style={[st.navText, on && { color: C.text }]}>{label}</Text></Pressable>;
 }
 
-function Welcome({ onScan }: { onScan: () => void }) {
+// for when the code is on this very phone (a chat, an e-mail): paste the link instead of scanning it
+function PasteLink({ onLink, hint }: { onLink: (t: string) => void; hint: string }) {
+  const [t, setT] = useState("");
+  return (
+    <View style={{ gap: 8 }}>
+      <Text style={st.label}>{hint}</Text>
+      <TextInput style={st.input} value={t} onChangeText={setT} placeholder="crema:join?…" placeholderTextColor={C.muted}
+        autoCapitalize="none" autoCorrect={false} onSubmitEditing={() => { onLink(t); setT(""); }} />
+      <Pressable style={[st.primary, { opacity: t.trim() ? 1 : 0.5 }]} disabled={!t.trim()} onPress={() => { onLink(t); setT(""); }}>
+        <Text style={st.primaryText}>Open the link</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function Welcome({ onScan, onLink }: { onScan: () => void; onLink: (t: string) => void }) {
   return (
     <ScrollView contentContainerStyle={{ padding: 20, gap: 14 }}>
       <Text style={st.h1}>The coffee passport</Text>
       <Text style={st.body}>Visit the good coffee places in town and collect a stamp at each. Every café shows a code that changes every 30 seconds - scan it while you're there.</Text>
       <Text style={st.body}>To start, scan the event's join code from the organizer.</Text>
       <Pressable style={st.primary} onPress={onScan}><Text style={st.primaryText}>Scan the event's code</Text></Pressable>
+      <PasteLink onLink={onLink} hint="Got the event link in a message? Paste it here" />
       <Text style={st.muted}>No account, no server: your stamps are signed on this phone and shared over Logos with the other players.</Text>
     </ScrollView>
   );
@@ -208,7 +237,7 @@ function Board() {
   );
 }
 
-function Me({ onCafe }: { onCafe: () => void }) {
+function Me({ onCafe, onLink }: { onCafe: () => void; onLink: (t: string) => void }) {
   const c = useCrema();
   const g = c.game()!;
   const s = g.state();
@@ -229,6 +258,7 @@ function Me({ onCafe }: { onCafe: () => void }) {
         <Switch value={c.net.shared} onValueChange={(v) => c.setSharedNode(v)} />
       </View>
       <Text style={st.muted}>Network: {c.net.status}{c.net.error ? " - " + c.net.error : ""}</Text>
+      <PasteLink onLink={onLink} hint="Another event, or your café's setup link? Paste it here" />
       {c.games.size > 1 ? (
         <View style={{ gap: 6 }}>
           <Text style={st.label}>Events</Text>
