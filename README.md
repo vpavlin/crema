@@ -20,34 +20,24 @@ Why not NFC tags: cheap tags (NTAG 424 DNA) use a symmetric key, so whoever veri
 the same key and could forge taps - you'd need one trusted verifier. Public-key signatures let
 everyone verify and only the café sign.
 
-## What's here (proof of concept)
+## How it's built (ADR 0001)
 
-| Part | What it is |
+No server, no website. Two apps at parity on one wire contract, both on Loam:
+
+| Part | Status |
 |---|---|
-| `protocol/` | stamps, signed catalog, player claims, geofence, leaderboard (JS, `@noble/curves`); `npm test` |
-| `web/display.html` | the café display: rotating QR, keeps the screen awake, works offline |
-| `web/index.html` | the player (web POC): scan, GPS check, passport, map (OpenStreetMap), export passport |
-| `tools/crema-admin.js` | organizer: create the event, add cafés (generates their keys), sign + publish the catalog, print display setup links, rank passports |
+| `packages/protocol` - stamps, signed catalog, player claims, geofence, leaderboard (JS reference, `npm test`) | done |
+| `packages/engine` - the event log (loam-sync) and the fold: catalog, claims, profiles → passport + leaderboard | next |
+| `mobile/` - Android (Expo, loam-transport): join an event by QR, map, scan + GPS check, passport, live leaderboard, café mode | planned |
+| `crema_core` + `module/` - Basecamp (C++ on loam_core + QML): organizer studio, café mode, big-screen leaderboard | planned |
+| e-ink café display (ESP32 + e-paper) | later |
+| private leaderboard on LEZ | later |
 
-```sh
-cd protocol && npm install && npm test
-cd ../web && npm install && npm run build && cp node_modules/leaflet/dist/leaflet.css dist/
-node tools/crema-admin.js init --event brno-coffee-test --name "Brno Coffee Passport (test)" --city Brno --start 2026-11-08 --days 21
-node tools/crema-admin.js cafe --id kafec --name Kafec --lat 49.192982 --lon 16.61154 --address "Orlí 16"
-node tools/crema-admin.js publish --base https://<where web/ is hosted>/
-node tools/crema-admin.js board passport-*.json
-```
+Sync: one Logos Delivery topic per event, sealed with the event key from the join QR; plain relay
+plus loam-sync RBSR catch-up. The leaderboard is computed on every device from signed claims.
 
-The camera and GPS need HTTPS on phones, so host `web/` on HTTPS (e.g. GitHub Pages). Display
-setup links carry a café's **secret** key: hand them over privately, never publish them. Secrets
-live in `admin/` (git-ignored).
-
-## Next
-
-1. The Android app (Loam): claims sync over Logos Delivery, a live leaderboard, Keycard identity.
-2. The Basecamp companion: organizer studio (cafés, keys, displays, events) and a big-screen leaderboard.
-3. The e-ink display (ESP32 + e-paper, key in read-protected eFuses).
-4. A private leaderboard on LEZ: prove "N distinct cafés" without revealing which.
+`docs/spikes/web-poc` is the first proof of concept (a website); it proved the stamp crypto and is
+kept as a record, not the product.
 
 Café data: OpenStreetMap (ODbL). We'd like to partner with European Coffee Trip for the curated list.
 

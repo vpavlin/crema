@@ -107,13 +107,17 @@ export function distanceM(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 // accuracyM: the phone's reported accuracy; a fix that might be inside the radius counts
+export const cafeLat = (cafe) => cafe.latE6 / 1e6;
+export const cafeLon = (cafe) => cafe.lonE6 / 1e6;
 export function nearCafe(cafe, lat, lon, accuracyM = 0) {
-  const d = distanceM(cafe.lat, cafe.lon, lat, lon);
+  const d = distanceM(cafeLat(cafe), cafeLon(cafe), lat, lon);
   return { ok: d - Math.min(accuracyM, 100) <= (cafe.radiusM || DEFAULT_RADIUS_M), distanceM: Math.round(d) };
 }
 
 // ── the organizer's signed catalog ──
-// { v:1, eventId, name, city, start(ms), end(ms), organizer(ed25519 pub hex), cafes:[{id,name,lat,lon,radiusM,pubkey,address?,url?}] }
+// { v:1, eventId, name, city, start(ms), end(ms), organizer(ed25519 pub hex), version,
+//   cafes:[{id,name,latE6,lonE6,radiusM,pubkey,address?,url?}] }  (coordinates are integer microdegrees:
+//   no floats in signed JSON, so JS and C++ produce the same bytes)
 export function signCatalog(catalog, organizerSecretHex) {
   const body = { ...catalog, organizer: bytesToHex(ed25519.getPublicKey(hexToBytes(organizerSecretHex))) };
   delete body.sig;

@@ -9,8 +9,8 @@ const catalog = C.signCatalog({
   v: 1, eventId: "brno-coffee-week-2026", name: "Brno Coffee Week", city: "Brno",
   start: T0 - 3600e3, end: T0 + 7 * 86400e3,
   cafes: [
-    { id: "cafe-a", name: "Café A", lat: 49.1951, lon: 16.6068, radiusM: 75, pubkey: k1.publicKey },
-    { id: "cafe-b", name: "Café B", lat: 49.2002, lon: 16.6110, radiusM: 75, pubkey: k2.publicKey },
+    { id: "cafe-a", name: "Café A", latE6: 49195100, lonE6: 16606800, radiusM: 75, pubkey: k1.publicKey },
+    { id: "cafe-b", name: "Café B", latE6: 49200200, lonE6: 16611000, radiusM: 75, pubkey: k2.publicKey },
   ],
 }, org.secretKey);
 
