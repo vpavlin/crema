@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Dialogs
 // The host requires these imports for custom colours to apply; the view styles with its own palette.
 import Logos.Theme
 import Logos.Controls
@@ -134,6 +135,14 @@ Item {
         }
     }
     TextEdit { id: clip; visible: false }
+    FileDialog {
+        id: mapDialog
+        title: "Choose the event map (.pmtiles)"
+        nameFilters: ["PMTiles maps (*.pmtiles)"]
+        onAccepted: root.act("importMap", [root.ev.eventId, String(selectedFile)], "Map imported - uploading to Logos Storage")
+    }
+    readonly property var draftMap: ev && ev.draft && ev.draft.map ? ev.draft.map : null
+    function mb(b) { return (Number(b || 0) / 1048576).toFixed(1) + " MB"; }
 
     // ── building blocks ──
     component CButton: Rectangle {
@@ -291,6 +300,38 @@ Item {
                         }
                         Label2 { Layout.fillWidth: true; wrapMode: Text.WordWrap
                                  text: "Players: " + root.board.length + " on the leaderboard · " + (root.ev ? root.ev.logSize : 0) + " events in the log · this desktop: " + root.shortAddr(root.st.me) }
+                    }
+                }
+                // the event map (on Logos Storage; docs/adr/0002)
+                Rectangle {
+                    Layout.fillWidth: true; Layout.leftMargin: 18; Layout.rightMargin: 18
+                    implicitHeight: mapCol.implicitHeight + 24; radius: 12; color: root.cCard; border.color: root.cLine
+                    ColumnLayout {
+                        id: mapCol; anchors.fill: parent; anchors.margins: 12; spacing: 6
+                        RowLayout {
+                            Layout.fillWidth: true; spacing: 8
+                            Text { text: "Event map"; color: root.cText; font.pixelSize: 16; font.bold: true; textFormat: Text.PlainText }
+                            Rectangle {
+                                visible: !!root.draftMap; implicitWidth: ms.implicitWidth + 16; implicitHeight: 22; radius: 11
+                                color: root.draftMap && root.draftMap.state === "ready" ? "#24331d" : "#3a2a12"
+                                Text { id: ms; anchors.centerIn: parent; font.pixelSize: 11; textFormat: Text.PlainText
+                                       color: root.draftMap && root.draftMap.state === "ready" ? root.cGood : root.cCrema
+                                       text: !root.draftMap ? "" : (root.draftMap.state === "ready" ? "On Logos Storage" : "Uploading…") }
+                            }
+                            Item { Layout.fillWidth: true }
+                            CButton { label: root.draftMap ? "Replace" : "Import map"; onClicked: mapDialog.open() }
+                            CButton { label: "Remove"; danger: true; visible: !!root.draftMap; onClicked: root.act("removeMap", [root.ev.eventId], "Map removed (publish to apply)") }
+                        }
+                        Label2 {
+                            Layout.fillWidth: true; wrapMode: Text.WordWrap
+                            text: !root.draftMap
+                                  ? "Phones draw the map from tiles you provide - no map servers. Make a .pmtiles file for the event area with tools/make-map.sh (from OpenStreetMap data), then import it here: it goes on Logos Storage and the next publish signs it in."
+                                  : root.mb(root.draftMap.size) + " · zoom up to " + root.draftMap.maxzoom
+                                    + (root.draftMap.cid ? " · CID " + String(root.draftMap.cid).slice(0, 14) + "…" : "")
+                                    + (root.draftMap.state === "ready" ? ((root.ev.catalog && root.ev.catalog.map && root.ev.catalog.map.cid === root.draftMap.cid) ? " · published" : " · publish to send it to the players") : "")
+                        }
+                        Text { visible: !!(root.draftMap && root.draftMap.error); Layout.fillWidth: true; wrapMode: Text.WordWrap; color: root.cBad; font.pixelSize: 12; textFormat: Text.PlainText
+                               text: root.draftMap && root.draftMap.error ? root.draftMap.error : "" }
                     }
                 }
                 // cafés

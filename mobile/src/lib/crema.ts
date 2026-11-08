@@ -7,6 +7,10 @@
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import * as transport from "./loam-transport";
 import { fileStore, secretStore } from "./store";
+import * as FS from "expo-file-system/legacy";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { Buffer } from "buffer";
+import * as storage from "./loam-transport-pkg/src/loam-storage";
 import { crumb } from "./crashlog";
 import * as P from "../../../packages/protocol/src/index.js";
 import { CremaGame } from "../../../packages/engine/src/engine.js";
@@ -17,6 +21,10 @@ const K_PLAYER = "crema-player-key", K_SHARED = "crema-shared-node", K_CAFE = "c
 const HELLO_EVERY_MS = 5 * 60_000;
 
 export type Join = { eventId: string; organizer: string; secretHex: string; name: string };
+// The event's own map (docs/adr/0002): a .pmtiles file on Logos Storage, named (CID + sha256) in the
+// signed catalog, fetched through Loam's Storage and kept here. Never a tile server.
+export type MapState = { state: "none" | "no-storage" | "fetching" | "ready" | "failed"; path?: string; bytes?: number; total?: number; error?: string; sha256?: string; maxzoom?: number };
+
 export type CafeMode = { cafeId: string; secretHex: string; publicKey: string; name: string; eventName: string };
 
 const hexOf = (b: Uint8Array) => Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
@@ -153,6 +161,60 @@ class Crema {
   async setSharedNode(on: boolean) { await secretStore.set(K_SHARED, on ? "1" : "0"); this.net.shared = on; this.emit(); }
 
   // ── café mode: this device shows a café's rotating stamp ──
+  // ── the event map ──
+  maps = new Map<string, MapState>();          // sha256 -> state
+  private mapJobs = new Set<string>();
+  mapFor(g: CremaGame | null): MapState {
+    const m = g ? P.mapOf(g.state().catalog) : null;
+    if (!m) return { state: "none" };
+    const st = this.maps.get(m.sha256);
+    if (!st) { this.ensureMap(g!); return { state: "fetching", sha256: m.sha256, maxzoom: m.maxzoom }; }
+    return { ...st, maxzoom: m.maxzoom };
+  }
+  private setMap(sha: string, st: MapState) { this.maps.set(sha, { ...st, sha256: sha }); this.emit(); }
+  async ensureMap(g: CremaGame) {
+    const m = P.mapOf(g.state().catalog);
+    if (!m || this.mapJobs.has(m.sha256)) return;
+    this.mapJobs.add(m.sha256);
+    const dir = (FS.documentDirectory || "") + "maps/";
+    const final = dir + m.sha256 + ".pmtiles";
+    try {
+      await FS.makeDirectoryAsync(dir, { intermediates: true }).catch(() => {});
+      const have = await FS.getInfoAsync(final);
+      if (have.exists && (have as any).size === m.size) { this.setMap(m.sha256, { state: "ready", path: final }); return; }
+      if (!(await storage.available())) {
+        this.setMap(m.sha256, { state: "no-storage", error: "The map comes over Logos Storage: install Loam and turn Storage on" });
+        return;
+      }
+      this.setMap(m.sha256, { state: "fetching", bytes: 0, total: m.size });
+      let job = await storage.fetch(m.cid, m.providers);
+      const t0 = Date.now();
+      while (job && job.state !== "done") {
+        if (job.state === "failed" || job.state === "cancelled") throw new Error(job.error || job.state);
+        if (Date.now() - t0 > 30 * 60_000) throw new Error("timed out");
+        this.setMap(m.sha256, { state: "fetching", bytes: job.bytes || 0, total: job.total || m.size });
+        await new Promise((r) => setTimeout(r, 2000));
+        job = await storage.status(m.cid);
+      }
+      if (!job) throw new Error("Loam's Storage did not answer");
+      const tmp = dir + m.sha256 + ".part";
+      await storage.saveTo(m.cid, tmp.replace(/^file:\/\//, ""));
+      // Loam knows CIDs only: the bytes must be the ones the organizer signed
+      const b64 = await FS.readAsStringAsync(tmp, { encoding: FS.EncodingType.Base64 });
+      const got = hexOf(sha256(new Uint8Array(Buffer.from(b64, "base64"))));
+      if (got !== m.sha256) { await FS.deleteAsync(tmp, { idempotent: true }); throw new Error("the downloaded map isn't the one the organizer signed"); }
+      await FS.moveAsync({ from: tmp, to: final });
+      crumb("map ready " + m.sha256.slice(0, 12) + " " + m.size + "B");
+      this.setMap(m.sha256, { state: "ready", path: final });
+    } catch (e: any) {
+      crumb("map failed " + (e?.message || e));
+      this.setMap(m.sha256, { state: "failed", error: String(e?.message || e) });
+    } finally {
+      this.mapJobs.delete(m.sha256);
+    }
+  }
+  retryMap() { const g = this.game(); const m = g && P.mapOf(g.state().catalog); if (m) { this.maps.delete(m.sha256); this.ensureMap(g!); } }
+
   async setCafeMode(c: CafeMode | null) {
     this.cafe = c;
     if (c) await secretStore.set(K_CAFE, JSON.stringify(c)); else await secretStore.set(K_CAFE, "");

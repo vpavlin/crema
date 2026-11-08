@@ -14,7 +14,10 @@ const catalog = P.signCatalog({ v: 1, eventId: "brno-test", name: "Brno Coffee W
   cafes: [
     { id: "kafec", name: "Kafec", latE6: 49192982, lonE6: 16611540, radiusM: 75, pubkey: kA.publicKey, address: "Orlí 16" },
     { id: "skog", name: "SKØG Urban Hub", latE6: 49193991, lonE6: 16607186, radiusM: 75, pubkey: kB.publicKey },
-  ] }, org.secretKey);
+  ],
+  map: { cid: "zDvZRwzm4Hh6V1J3XHxi2k9NkmRoyGcMcbBzgzaD3ZHAYXZ2AGAk", sha256: "f60a14bfa058e2646935b8ee361a993c2d1df9e89a357b29f8854ad38391806a", size: 1363968,
+         bboxE6: [16593000, 49176700, 16636100, 49215600], maxzoom: 16,
+         providers: [{ peerId: "16Uiu2HAmTest", addrs: ["/ip4/203.0.113.7/tcp/8090"] }] } }, org.secretKey);
 const join = P.parseJoinLink(P.makeJoinLink({ eventId: "brno-test", organizer: org.publicKey, secretHex, name: "Brno Coffee Week ☕" }));
 let now = T0;
 const mk = (sk) => new CremaGame({ join, playerSecretHex: sk, now: () => now });

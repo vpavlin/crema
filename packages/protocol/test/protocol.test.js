@@ -77,3 +77,15 @@ test("café setup link round trip: the device can sign stamps the catalog accept
   assert.equal(C.checkStamp(C.makeStamp(c.cafeId, c.secretHex, T0), catalog, T0).ok, true);
   assert.equal(C.parseCafeLink("crema:cafe?c=BAD ID&k=x"), null);
 });
+
+test("the event map: mapOf accepts the signed shape, rejects junk, and the signature covers it", () => {
+  const org = C.newKey();
+  const map = { cid: "zDvZRwzm4Hh6V1J3XHxi2k9NkmRoyGcMcbBzgzaD3ZHAYXZ2AGAk", sha256: "ab".repeat(32), size: 1000, bboxE6: [16593000, 49176700, 16636100, 49215600], maxzoom: 16 };
+  const c = C.signCatalog({ v: 1, eventId: "e", version: 1, cafes: [], map }, org.secretKey);
+  assert.deepEqual(C.mapOf(c), { ...map, providers: [] });
+  assert.equal(C.mapOf({ map: { ...map, sha256: "nope" } }), null);
+  assert.equal(C.mapOf({ map: { ...map, bboxE6: [1.5, 2, 3, 4] } }), null);
+  assert.equal(C.mapOf({}), null);
+  assert.ok(C.verifyCatalog(c, org.publicKey));
+  assert.ok(!C.verifyCatalog({ ...c, map: { ...map, cid: "zDvSwapped" + map.cid.slice(10) } }, org.publicKey), "a swapped map CID breaks the signature");
+});

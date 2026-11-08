@@ -128,6 +128,20 @@ export function verifyCatalog(signed, expectedOrganizerHex) {
   catch { return false; }
 }
 
+// The event's own map (ADR 0002): vector tiles in ONE .pmtiles file on Logos Storage, named in the signed
+// catalog. Integers only (microdegrees), so JS and C++ sign the same canonical bytes. providers: Storage
+// nodes known to hold it ({peerId, addrs, spr?}), dialled first. Returns the map or null when absent/invalid.
+export function mapOf(catalog) {
+  const m = catalog && catalog.map;
+  if (!m || typeof m !== "object") return null;
+  if (typeof m.cid !== "string" || !/^[A-Za-z0-9]{20,120}$/.test(m.cid)) return null;
+  if (typeof m.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(m.sha256)) return null;
+  if (!Number.isInteger(m.size) || m.size <= 0 || m.size > 64 * 1024 * 1024) return null;
+  if (!Array.isArray(m.bboxE6) || m.bboxE6.length !== 4 || !m.bboxE6.every(Number.isInteger)) return null;
+  const providers = Array.isArray(m.providers) ? m.providers.filter((p) => p && typeof p.peerId === "string" && Array.isArray(p.addrs)).slice(0, 8) : [];
+  return { cid: m.cid, sha256: m.sha256, size: m.size, bboxE6: m.bboxE6, maxzoom: Number.isInteger(m.maxzoom) ? m.maxzoom : 16, providers };
+}
+
 // Query strings without URLSearchParams (React Native's lacks get())
 function encQuery(obj) { return Object.entries(obj).map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v)).join("&"); }
 function decQuery(q) {

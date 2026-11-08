@@ -43,6 +43,10 @@ public:
     std::string joinEvent(std::string link);
     // Which event the view shows
     std::string selectEvent(std::string eventId);
+    // The event's own map: a .pmtiles file (tools/make-map.sh) - path or file:// URL. Uploaded to Logos Storage; the next publish signs its CID in
+    std::string importMap(std::string eventId, std::string path);
+    // Drop the map from the draft (publish to take it off the phones)
+    std::string removeMap(std::string eventId);
 
 protected:
     void onContextReady() override;
@@ -75,6 +79,11 @@ private:
     void publish();
     crema::json eventJson(const Ev& e);
     static void withSelf(const std::shared_ptr<Life>& life, std::function<void(CremaCoreImpl*)> fn);
+    void ensureStorage();
+    void uploadMap(Ev& e);
+    void onUploadDone(const std::string& payload);
+    void mapUploaded(const std::string& eventId, const std::string& cid);
+    void pollStorage();
 
     std::recursive_mutex m_mtx;
     std::shared_ptr<Life> m_life;
@@ -85,4 +94,8 @@ private:
     bool m_starting = false, m_ready = false;
     int m_startFailures = 0, m_helloRounds = 0;
     long long m_lastStartMs = 0, m_lastPollMs = 0, m_lastHelloMs = 0;
+    // Logos Storage (the host's node; we never init() it)
+    bool m_storageStarted = false, m_storageBusy = false;
+    long long m_lastManifestPollMs = 0;
+    std::map<std::string, std::string> m_upSessions;   // upload session -> eventId
 };

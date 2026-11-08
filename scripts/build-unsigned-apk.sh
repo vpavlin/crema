@@ -10,6 +10,7 @@ export ANDROID_HOME="${ANDROID_HOME:-$HOME/Android/Sdk}"
 LOG="${CREMA_APK_LOG:-$ROOT/mobile/build-unsigned-apk.log}"
 cd "$ROOT/mobile"
 : > "$LOG"
+node scripts/vendor-map.mjs >> "$LOG" 2>&1   # MapLibre + pmtiles inlined into the map page (no CDN)
 npx expo prebuild --platform android --clean --no-install >> "$LOG" 2>&1
 echo "sdk.dir=$ANDROID_HOME" > android/local.properties     # --clean wipes it
 python3 - <<'PY'

@@ -1,7 +1,8 @@
 // Crema - the coffee passport. Join an event by scanning the organizer's QR, then scan each café's
 // rotating code at the café. Everything syncs over Logos (Loam's shared node); the leaderboard is
 // computed on this phone from signed stamps.
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import * as FS from "expo-file-system/legacy";
 import { Alert, FlatList, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
@@ -10,6 +11,8 @@ import QRCode from "react-native-qrcode-svg";
 import { useKeepAwake } from "expo-keep-awake";
 import { crema, P } from "./src/lib/crema";
 import { scanQr, locationFix } from "./src/lib/native";
+import { mapPage, MapCafe } from "./src/map/mapPage";
+import { crumb } from "./src/lib/crashlog";
 import { SharedNodeStatus } from "./src/lib/loam-transport-pkg/src/SharedNodeStatus";
 
 const C = { bg: "#1d1410", card: "#2a1d16", line: "#3a2a20", crema: "#d9a066", text: "#f3e7da", muted: "#b59c86", good: "#3d5a2f", bad: "#6b2a22" };
@@ -127,20 +130,38 @@ function Passport() {
 function MapTab() {
   const g = crema.game()!;
   const s = g.state();
+  const map = crema.mapFor(g);
+  const web = useRef<WebView>(null);
+  const [pageReady, setPageReady] = useState(false);
+  const [shown, setShown] = useState("");
   const html = useMemo(() => {
-    const cafes = (s.catalog?.cafes || []).map((c: any) => ({ n: c.name, a: c.address || "", lat: c.latE6 / 1e6, lon: c.lonE6 / 1e6, v: s.myVisited.has(c.id) }));
-    return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>html,body,#m{margin:0;height:100%;background:#1d1410}</style></head><body><div id="m"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
-var cafes=${JSON.stringify(cafes)};var m=L.map('m');
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(m);
-var pts=[];cafes.forEach(function(c){var k=L.circleMarker([c.lat,c.lon],{radius:9,color:'#2a1d16',weight:2,fillColor:c.v?'#d9a066':'#6b4f3f',fillOpacity:.95}).addTo(m);
-var e=document.createElement('div');var b=document.createElement('b');b.textContent=c.n;e.appendChild(b);e.appendChild(document.createElement('br'));e.appendChild(document.createTextNode(c.a));k.bindPopup(e);pts.push([c.lat,c.lon]);});
-if(pts.length)m.fitBounds(pts,{padding:[30,30]});else m.setView([49.195,16.608],14);
-</script></body></html>`;
+    const cafes: MapCafe[] = (s.catalog?.cafes || []).map((c: any) => ({ n: c.name, a: c.address || "", lat: c.latE6 / 1e6, lon: c.lonE6 / 1e6, v: s.myVisited.has(c.id) }));
+    return mapPage(cafes, map.maxzoom || 16);
   }, [s.catalog?.version, s.myVisited.size]);
-  return <WebView originWhitelist={["*"]} source={{ html }} style={{ flex: 1, backgroundColor: C.bg }} />;
+  useEffect(() => { setPageReady(false); setShown(""); }, [html]);
+  // the event's tiles: from our copy on disk into the page, in pieces (one huge injected string stalls the bridge)
+  useEffect(() => {
+    if (!pageReady || map.state !== "ready" || !map.path || shown === map.path) return;
+    let off = false;
+    (async () => {
+      try {
+        const b64 = await FS.readAsStringAsync(map.path!, { encoding: FS.EncodingType.Base64 });
+        for (let i = 0; i < b64.length && !off; i += 512 * 1024) web.current?.injectJavaScript(`window.__crema.addChunk(${JSON.stringify(b64.slice(i, i + 512 * 1024))});true;`);
+        if (!off) { web.current?.injectJavaScript("window.__crema.mapReady();true;"); setShown(map.path!); }
+      } catch (e: any) { crumb("map inject " + (e?.message || e)); }
+    })();
+    return () => { off = true; };
+  }, [pageReady, map.state, map.path, shown]);
+  const pct = map.total ? Math.floor(((map.bytes || 0) * 100) / map.total) : 0;
+  return (
+    <View style={{ flex: 1 }}>
+      {map.state === "fetching" && <Text style={st.mapNote}>Getting the event map over Logos Storage… {pct ? pct + " %" : ""}</Text>}
+      {map.state === "no-storage" && <Text style={st.mapNote}>{map.error}</Text>}
+      {map.state === "failed" && <Pressable onPress={() => crema.retryMap()}><Text style={st.mapNote}>No map yet ({map.error}). Tap to try again.</Text></Pressable>}
+      <WebView ref={web} originWhitelist={["*"]} source={{ html }} style={{ flex: 1, backgroundColor: C.bg }}
+        onMessage={(e) => { try { const m = JSON.parse(e.nativeEvent.data); if (m.t === "ready") setPageReady(true); if (m.t === "map" && !m.ok) crumb("map render " + m.error); } catch { /* */ } }} />
+    </View>
+  );
 }
 
 function Board() {
@@ -229,6 +250,7 @@ function CafeMode({ onExit }: { onExit: () => void }) {
 }
 
 const st = StyleSheet.create({
+  mapNote: { color: C.muted, backgroundColor: C.card, paddingHorizontal: 14, paddingVertical: 8, fontSize: 13 },
   root: { flex: 1, backgroundColor: C.bg },
   header: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6, flexDirection: "row", alignItems: "baseline", justifyContent: "space-between", gap: 12 },
   brand: { color: C.crema, fontWeight: "700", letterSpacing: 5 },
