@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1d1410">
+<title>Crema · coffee passport</title>
+<link rel="stylesheet" href="dist/leaflet.css">
+<style>
+  :root { --bg:#1d1410; --card:#2a1d16; --crema:#d9a066; --text:#f3e7da; --muted:#b59c86; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  header { padding:14px 16px 8px; display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+  .brand { letter-spacing:.3em; text-transform:uppercase; color:var(--crema); font-weight:700; }
+  #event { color:var(--muted); font-size:14px; }
+  section { padding:0 16px 96px; }
+  #mapview { height:calc(100vh - 150px); border-radius:16px; }
+  .big { font-size:44px; font-weight:800; margin:8px 0 2px; }
+  ul { list-style:none; padding:0; margin:12px 0; }
+  li { display:flex; gap:12px; align-items:center; background:var(--card); border-radius:12px; padding:12px; margin:8px 0; cursor:pointer; }
+  li.done { outline:1px solid var(--crema); }
+  li small { color:var(--muted); }
+  .stamp { font-size:24px; width:32px; text-align:center; }
+  nav { position:fixed; bottom:0; left:0; right:0; display:flex; background:var(--card); padding:8px 8px calc(8px + env(safe-area-inset-bottom)); gap:8px; }
+  nav button { flex:1; background:none; color:var(--muted); border:0; padding:10px; font-size:15px; border-radius:10px; }
+  nav button.on { color:var(--text); background:#3a2a20; }
+  nav button.scanbtn { background:var(--crema); color:#1d1410; font-weight:700; }
+  #video { width:100%; border-radius:16px; background:#000; }
+  #toast { position:fixed; left:16px; right:16px; bottom:90px; padding:14px; border-radius:12px; opacity:0; transition:opacity .3s; pointer-events:none; }
+  #toast.show { opacity:1; } #toast.good { background:#3d5a2f; } #toast.bad { background:#6b2a22; }
+  .row { display:flex; gap:8px; align-items:center; margin:12px 0; color:var(--muted); font-size:14px; }
+  input { background:var(--card); color:var(--text); border:1px solid #4a372b; border-radius:8px; padding:8px; flex:1; }
+  .ghost { background:none; border:1px solid var(--muted); color:var(--text); border-radius:10px; padding:10px 14px; }
+</style>
+</head>
+<body>
+<header><span class="brand">Crema</span><span id="event">…</span></header>
+
+<section id="passport" hidden>
+  <div class="big" id="count">0</div>
+  <div style="color:var(--muted)">cafés stamped</div>
+  <ul id="list"></ul>
+  <div class="row"><span>Name on the leaderboard</span><input id="nick" maxlength="40" placeholder="optional"></div>
+  <div class="row"><button class="ghost" id="export">Send my passport to the leaderboard</button><span id="me"></span></div>
+</section>
+<section id="map" hidden><div id="mapview"></div></section>
+<section id="scan" hidden>
+  <p id="scanmsg"></p>
+  <video id="video" playsinline muted></video>
+</section>
+
+<div id="toast"></div>
+<nav>
+  <button data-tab="passport">Passport</button>
+  <button data-tab="scan" class="scanbtn">Scan</button>
+  <button data-tab="map">Map</button>
+</nav>
+<script>window.CREMA_ORGANIZER = "87e360b168b3eb1e32fac72ba6eb0904cca880cdfe63f94600715a3a8188d05e";</script>
+<script src="dist/player.js"></script>
+</body>
+</html>

@@ -1,0 +1,120 @@
+{
+  "v": 1,
+  "eventId": "brno-coffee-test",
+  "name": "Brno Coffee Passport (test)",
+  "city": "Brno",
+  "start": 1794092400000,
+  "end": 1795906799999,
+  "cafes": [
+    {
+      "id": "industra",
+      "name": "Industra Coffee",
+      "lat": 49.182727,
+      "lon": 16.627054,
+      "radiusM": 75,
+      "pubkey": "7388325a6112716a9bda80da57bba9e0a9f4bc94e2abd09010d0b3bad99247fa",
+      "address": "Masná 9"
+    },
+    {
+      "id": "skog",
+      "name": "SKØG Urban Hub",
+      "lat": 49.193991,
+      "lon": 16.607186,
+      "radiusM": 75,
+      "pubkey": "eda15e43b188fe506066cfef0f608b61009cf793ee82d502f3b948f2896a9cef",
+      "address": "Dominikánské náměstí 5"
+    },
+    {
+      "id": "monogram",
+      "name": "Monogram Espresso Bar",
+      "lat": 49.191717,
+      "lon": 16.609925,
+      "radiusM": 75,
+      "pubkey": "dfbc0e70622039cfb89c62d0ec0e4b00dffec485e40f28e504d7ad9321dd5643",
+      "address": "Kapucínské náměstí 12"
+    },
+    {
+      "id": "kafec",
+      "name": "Kafec",
+      "lat": 49.192982,
+      "lon": 16.61154,
+      "radiusM": 75,
+      "pubkey": "91466656b1a434111c09f1e4ce9c98e378b69abea5d09e61a0605baf41568178",
+      "address": "Orlí 16"
+    },
+    {
+      "id": "spolek",
+      "name": "Kavárna Spolek",
+      "lat": 49.193804,
+      "lon": 16.612644,
+      "radiusM": 75,
+      "pubkey": "0572416dc9a6ab95530c2bea5835053da194bc8e2230aa921b11f3ad73fe77c4",
+      "address": "Orlí 22"
+    },
+    {
+      "id": "typika",
+      "name": "Typika",
+      "lat": 49.197897,
+      "lon": 16.608306,
+      "radiusM": 75,
+      "pubkey": "a064b19d2234477204777fa3ea9927753c60dabbdefa03a9841b4685a2e1483a",
+      "address": "Brno-střed"
+    },
+    {
+      "id": "rebelbean-prizova",
+      "name": "Rebelbean",
+      "lat": 49.189794,
+      "lon": 16.616486,
+      "radiusM": 75,
+      "pubkey": "328ce1e625d5b91a1de1b40ba60056a80867b8fba979f98883adc02d2dc0ee84",
+      "address": "Přízova 5"
+    },
+    {
+      "id": "stehlik",
+      "name": "Stehlik Coffee Bar",
+      "lat": 49.190945,
+      "lon": 16.622752,
+      "radiusM": 75,
+      "pubkey": "19583d949a3fe0c4fde042f3ea1b4c9951e20c397914b29065f52a86042e05ae",
+      "address": "Brno-střed"
+    },
+    {
+      "id": "au-lait",
+      "name": "Au Lait espresso bar",
+      "lat": 49.199194,
+      "lon": 16.5924,
+      "radiusM": 75,
+      "pubkey": "efecb9a43d83a84a9c443cb9c36451e3c43db0eca420b5a5c43b76eebc25ff17",
+      "address": "Gorkého 96/54"
+    },
+    {
+      "id": "parq",
+      "name": "Parq espresso bar",
+      "lat": 49.199569,
+      "lon": 16.606759,
+      "radiusM": 75,
+      "pubkey": "603273da31391a0f98ff8215c5a00fd9c1d710f9173d9ed31170b49fc26ca62c",
+      "address": "Brno-střed"
+    },
+    {
+      "id": "gills",
+      "name": "Gill's Espresso Bar",
+      "lat": 49.199226,
+      "lon": 16.602463,
+      "radiusM": 75,
+      "pubkey": "e1c8bce7fee7a6d30a1152ec60dcfbc59553501c0e9ce95680ca3802fc6e7a36",
+      "address": "Veveří 9"
+    },
+    {
+      "id": "coffee-bar-story",
+      "name": "Coffee Bar Story",
+      "lat": 49.201404,
+      "lon": 16.607287,
+      "radiusM": 75,
+      "pubkey": "5a795f454ba33a124f177a8428793bc3dbe2c96a3aa258dbb58bd5132dd4b363",
+      "address": "Lidická 15"
+    }
+  ],
+  "organizer": "87e360b168b3eb1e32fac72ba6eb0904cca880cdfe63f94600715a3a8188d05e",
+  "sig": "c7b6a30e42d3b8c81b8a055ce6d86c9edc9984a84236ed0ae79b93a77b0d637beadf85932c502dfcdec4da2467cbd868d152714ce181f71382ed26b4f310f70b"
+}

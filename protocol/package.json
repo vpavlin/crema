@@ -1,0 +1,10 @@
+{
+  "name": "@crema/protocol",
+  "version": "0.1.0",
+  "description": "Crema coffee passport: rotating signed café stamps, signed event catalogs, player claims and the leaderboard fold",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": { "test": "node --test test/*.test.js" },
+  "license": "MIT",
+  "dependencies": { "@noble/curves": "^1.9.0", "@noble/hashes": "^1.8.0" }
+}

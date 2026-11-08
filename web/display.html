@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Crema · stamp here</title>
+<style>
+  :root { --bg:#1d1410; --card:#2a1d16; --crema:#d9a066; --text:#f3e7da; --muted:#b59c86; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { min-height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2vh; padding:3vh 4vw; box-sizing:border-box; text-align:center; }
+  .brand { letter-spacing:.3em; text-transform:uppercase; color:var(--crema); font-weight:700; font-size:clamp(14px,2.2vh,22px); }
+  h1 { margin:0; font-size:clamp(24px,5vh,56px); }
+  #event { color:var(--muted); font-size:clamp(14px,2.4vh,24px); }
+  #qr { background:#fff; border-radius:24px; padding:2vh; width:min(70vw,60vh); aspect-ratio:1; box-sizing:border-box; }
+  #qr svg { width:100%; height:100%; display:block; }
+  .track { width:min(70vw,60vh); height:8px; background:var(--card); border-radius:4px; overflow:hidden; }
+  #bar { height:100%; width:100%; background:var(--crema); }
+  #hint { color:var(--muted); font-size:clamp(14px,2.4vh,22px); max-width:40em; }
+  footer { color:var(--muted); font-size:12px; display:flex; gap:16px; align-items:center; }
+  button { background:none; border:1px solid var(--muted); color:var(--muted); border-radius:8px; padding:4px 10px; }
+  #err { color:#ff8a7a; }
+</style>
+</head>
+<body>
+<main>
+  <div class="brand">Crema</div>
+  <h1 id="name">…</h1>
+  <div id="event"></div>
+  <div id="qr"></div>
+  <div class="track"><div id="bar"></div></div>
+  <div id="hint">Scan with the Crema app to collect this café's stamp. The code changes every 30 seconds.</div>
+  <div id="err"></div>
+  <footer><span id="clock"></span><button id="reset">reset</button></footer>
+</main>
+<script src="dist/display.js"></script>
+</body>
+</html>
