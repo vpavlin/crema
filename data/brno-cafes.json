@@ -1,0 +1,144 @@
+{
+ "city": "Brno",
+ "asOf": "2026-11-08",
+ "sources": {
+  "selection": "European Coffee Trip's Brno guide (europeancoffeetrip.com/brno/), as listed in public search results - their site blocks automated access, so it was not fetched; to be replaced by a partnership",
+  "positions": "OpenStreetMap contributors, ODbL (amenity=cafe in Brno, 2026-11-08)"
+ },
+ "notes": "Not in OSM, so left out: Bratrs, Spital. Far from the centre, left out: Kafara, Coffee Trail Garden, Kafe Skácel. Monogram was one of four Brno cafés in ECT's 2024 Czech awards.",
+ "cafes": [
+  {
+   "id": "monogram",
+   "name": "Monogram Espresso Bar",
+   "latE6": 49191717,
+   "lonE6": 16609925,
+   "address": "Kapucínské náměstí 12"
+  },
+  {
+   "id": "kafec",
+   "name": "Kafec",
+   "latE6": 49192982,
+   "lonE6": 16611540,
+   "address": "Orlí 16"
+  },
+  {
+   "id": "skog",
+   "name": "SKØG Urban Hub",
+   "latE6": 49193991,
+   "lonE6": 16607186,
+   "address": "Dominikánské náměstí 5"
+  },
+  {
+   "id": "morgal",
+   "name": "Café Morgal",
+   "latE6": 49195691,
+   "lonE6": 16604532,
+   "address": "Husova 18"
+  },
+  {
+   "id": "gills",
+   "name": "Gill's Coffee",
+   "latE6": 49199226,
+   "lonE6": 16602463,
+   "address": "Veveří 9"
+  },
+  {
+   "id": "jaga",
+   "name": "Jaga",
+   "latE6": 49198247,
+   "lonE6": 16602300,
+   "address": "Žerotínovo náměstí 6"
+  },
+  {
+   "id": "diwa",
+   "name": "Diwa Coffee",
+   "latE6": 49194216,
+   "lonE6": 16612083,
+   "address": "Orlí 19"
+  },
+  {
+   "id": "buchta-c",
+   "name": "Buchta C",
+   "latE6": 49192062,
+   "lonE6": 16607462,
+   "address": "Zelný trh 10"
+  },
+  {
+   "id": "the-roses",
+   "name": "The Roses Purkyňova",
+   "latE6": 49199758,
+   "lonE6": 16604418,
+   "address": ""
+  },
+  {
+   "id": "cafe-mitte",
+   "name": "Cafe Mitte",
+   "latE6": 49193479,
+   "lonE6": 16608124,
+   "address": ""
+  },
+  {
+   "id": "pikola",
+   "name": "Pikola",
+   "latE6": 49196409,
+   "lonE6": 16607037,
+   "address": "Jakubská 5"
+  },
+  {
+   "id": "the-miners",
+   "name": "The Miners Coffee",
+   "latE6": 49197102,
+   "lonE6": 16609124,
+   "address": "Běhounská 20"
+  },
+  {
+   "id": "placzek",
+   "name": "Café Placzek",
+   "latE6": 49194119,
+   "lonE6": 16610804,
+   "address": "Minoritská 4"
+  },
+  {
+   "id": "but-first-coffee",
+   "name": "But First Coffee",
+   "latE6": 49197119,
+   "lonE6": 16610526,
+   "address": "Jezuitská 11"
+  },
+  {
+   "id": "testo",
+   "name": "Těsto",
+   "latE6": 49200076,
+   "lonE6": 16602172,
+   "address": "Slovákova 6"
+  },
+  {
+   "id": "industra",
+   "name": "Industra Coffee",
+   "latE6": 49182727,
+   "lonE6": 16627054,
+   "address": "Masná 9"
+  },
+  {
+   "id": "poppy-beans",
+   "name": "Poppy Beans",
+   "latE6": 49208955,
+   "lonE6": 16605478,
+   "address": ""
+  },
+  {
+   "id": "coffee-trail-bar",
+   "name": "Coffee Trail Bar",
+   "latE6": 49209614,
+   "lonE6": 16603477,
+   "address": "Štefánikova 93/22"
+  },
+  {
+   "id": "punkt",
+   "name": "Punkt espresso bar",
+   "latE6": 49206280,
+   "lonE6": 16601983,
+   "address": "Bayerova 7"
+  }
+ ]
+}
