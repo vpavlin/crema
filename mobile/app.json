@@ -1,0 +1,33 @@
+{
+  "expo": {
+    "name": "Crema",
+    "slug": "crema",
+    "scheme": "crema",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "platforms": ["android"],
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#1d1410",
+    "android": {
+      "package": "xyz.vpavlin.crema",
+      "versionCode": 1,
+      "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#1d1410" },
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_BACKGROUND_LOCATION"
+      ]
+    },
+    "plugins": [
+      "./plugins/withLogosDelivery",
+      "./plugins/withQrScan",
+      "./plugins/withGeoFix",
+      "expo-secure-store",
+      "./src/lib/loam-transport-pkg/plugins/withDeliveryClient.js",
+      ["expo-splash-screen", { "image": "./assets/splash-icon.png", "backgroundColor": "#1d1410", "imageWidth": 180 }]
+    ]
+  }
+}

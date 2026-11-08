@@ -69,3 +69,11 @@ test("base64url round trip", () => {
     assert.deepEqual(C.unb64url(C.b64url(b)), b);
   }
 });
+
+test("café setup link round trip: the device can sign stamps the catalog accepts", () => {
+  const link = C.makeCafeLink({ cafeId: "cafe-a", secretHex: k1.secretKey, name: "Café A", eventName: "Brno Coffee Week" });
+  const c = C.parseCafeLink(link);
+  assert.equal(c.publicKey, k1.publicKey);
+  assert.equal(C.checkStamp(C.makeStamp(c.cafeId, c.secretHex, T0), catalog, T0).ok, true);
+  assert.equal(C.parseCafeLink("crema:cafe?c=BAD ID&k=x"), null);
+});

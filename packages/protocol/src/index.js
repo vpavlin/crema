@@ -128,16 +128,28 @@ export function verifyCatalog(signed, expectedOrganizerHex) {
   catch { return false; }
 }
 
+// Query strings without URLSearchParams (React Native's lacks get())
+function encQuery(obj) { return Object.entries(obj).map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v)).join("&"); }
+function decQuery(q) {
+  const o = {};
+  for (const part of q.split("&")) {
+    if (!part) continue;
+    const i = part.indexOf("=");
+    const k = decodeURIComponent((i < 0 ? part : part.slice(0, i)).replace(/\+/g, " "));
+    o[k] = i < 0 ? "" : decodeURIComponent(part.slice(i + 1).replace(/\+/g, " "));
+  }
+  return { get: (k) => (k in o ? o[k] : null) };
+}
+
 // ── joining an event: what the organizer's join QR carries ──
 // crema:join?e=<eventId>&o=<organizer pub hex>&k=<event secret, 32 bytes b64url>&n=<name>
 export function makeJoinLink({ eventId, organizer, secretHex, name }) {
-  const q = new URLSearchParams({ e: eventId, o: organizer, k: b64url(hexToBytes(secretHex)), n: name || "" });
-  return "crema:join?" + q.toString();
+  return "crema:join?" + encQuery({ e: eventId, o: organizer, k: b64url(hexToBytes(secretHex)), n: name || "" });
 }
 export function parseJoinLink(text) {
   const t = String(text).trim();
   if (!t.startsWith("crema:join?")) return null;
-  const q = new URLSearchParams(t.slice("crema:join?".length));
+  const q = decQuery(t.slice("crema:join?".length));
   const eventId = q.get("e"), organizer = q.get("o"), k = q.get("k");
   if (!eventId || !/^[0-9a-f]{64}$/.test(organizer || "") || !k) return null;
   let secret;
@@ -146,5 +158,24 @@ export function parseJoinLink(text) {
   return { eventId, organizer, secretHex: bytesToHex(secret), name: q.get("n") || eventId };
 }
 export const newEventSecret = () => bytesToHex(randomBytes(32));
+
+// ── setting up a café's display: what the organizer shows the café's device ONCE, in person ──
+// crema:cafe?c=<cafeId>&k=<café secret, 32 bytes b64url>&n=<café name>&e=<event name>
+// It carries the café's SECRET key: never publish it, never send it over the event topic.
+export function makeCafeLink({ cafeId, secretHex, name, eventName }) {
+  return "crema:cafe?" + encQuery({ c: cafeId, k: b64url(hexToBytes(secretHex)), n: name || cafeId, e: eventName || "" });
+}
+export function parseCafeLink(text) {
+  const t = String(text).trim();
+  if (!t.startsWith("crema:cafe?")) return null;
+  const q = decQuery(t.slice("crema:cafe?".length));
+  const cafeId = q.get("c"), k = q.get("k");
+  if (!cafeId || !CAFE_ID.test(cafeId) || !k) return null;
+  let secret;
+  try { secret = unb64url(k); } catch { return null; }
+  if (secret.length !== 32) return null;
+  const secretHex = bytesToHex(secret);
+  return { cafeId, secretHex, publicKey: publicKeyOf(secretHex), name: q.get("n") || cafeId, eventName: q.get("e") || "" };
+}
 
 export { bytesToHex, hexToBytes, randomBytes };

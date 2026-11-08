@@ -9,3 +9,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: cd packages && npm ci && npm test
+  parity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev libssl-dev
+      - run: cd packages && npm ci && cd .. && crema_core/test/run.sh
