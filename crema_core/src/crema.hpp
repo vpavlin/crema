@@ -25,7 +25,7 @@ using json = nlohmann::json;
 using Bytes = std::vector<unsigned char>;
 using logos_sync::Event;
 
-static const char* DOMAIN = "crema";
+static const char* kDomain = "crema";
 static const int STEP_S = 30;
 static const int SKEW_STEPS = 1;
 static const long long CLAIM_LATE_MS = 2LL * STEP_S * 1000;
@@ -227,7 +227,7 @@ inline bool validCatalogEvent(const Event& e, const Join& join, json* out = null
     return true;
 }
 inline bool validStamp(const Event& e, const json& catalog) {
-    if (e.type != "stamp" || catalog.is_null() || !logos_sync::verifyEvent(DOMAIN, e)) return false;
+    if (e.type != "stamp" || catalog.is_null() || !logos_sync::verifyEvent(kDomain, e)) return false;
     const json& p = e.payload;
     if (!p.is_object() || !p.contains("cafeId") || !p["cafeId"].is_string() || !p.contains("step") || !p["step"].is_number_integer() || !p.contains("cafeSig") || !p["cafeSig"].is_string()) return false;
     const std::string cafeId = p["cafeId"]; const long long step = p["step"];
@@ -240,7 +240,7 @@ inline bool validStamp(const Event& e, const json& catalog) {
     return std::llabs(e.hlc.wall - t) <= CLAIM_LATE_MS;
 }
 inline bool validProfile(const Event& e) {
-    return e.type == "profile" && logos_sync::verifyEvent(DOMAIN, e) && e.payload.is_object() && e.payload.contains("name") && e.payload["name"].is_string() && e.payload["name"].get<std::string>().size() <= 40 * 4;
+    return e.type == "profile" && logos_sync::verifyEvent(kDomain, e) && e.payload.is_object() && e.payload.contains("name") && e.payload["name"].is_string() && e.payload["name"].get<std::string>().size() <= 40 * 4;
 }
 
 struct Standing { std::string author, name; int cafes = 0, stamps = 0; long long reachedAt = 0; std::vector<std::string> visited; };
@@ -286,8 +286,8 @@ public:
     std::string topic, author;
 
     Game(const Join& j, const logos_sync::Bytes& playerSecret)
-        : join(j), m_signer(playerSecret), m_group(logos_sync::crypto::deriveIdentity(unhex(j.secretHex), DOMAIN)), m_clock("") {
-        topic = logos_sync::crypto::topicFor(m_group, DOMAIN);
+        : join(j), m_signer(playerSecret), m_group(logos_sync::crypto::deriveIdentity(unhex(j.secretHex), kDomain)), m_clock("") {
+        topic = logos_sync::crypto::topicFor(m_group, kDomain);
         author = logos_sync::address(m_signer.publicKey());
         m_clock = logos_sync::Clock(author);
     }
@@ -295,7 +295,7 @@ public:
     bool admit(const Event& e) {
         if (e.id.empty()) return false;
         if (e.type == "catalog") { if (!validCatalogEvent(e, join)) return false; }
-        else if (e.type == "stamp" || e.type == "profile") { if (!logos_sync::verifyEvent(DOMAIN, e)) return false; }
+        else if (e.type == "stamp" || e.type == "profile") { if (!logos_sync::verifyEvent(kDomain, e)) return false; }
         else return false;
         const bool added = logos_sync::mergeOne(log, e);
         if (added) m_clock.receive(e.hlc);
@@ -305,7 +305,7 @@ public:
 
     Bytes frame(const json& obj, const std::string& id) const {
         const std::string text = obj.dump();
-        return logos_sync::crypto::seal(m_group, DOMAIN, id, Bytes(text.begin(), text.end()), topic);
+        return logos_sync::crypto::seal(m_group, kDomain, id, Bytes(text.begin(), text.end()), topic);
     }
     Bytes eventFrame(const Event& e) const { return frame(json{{"t", "ev"}, {"e", logos_sync::eventToJson(e)}}, e.id); }
     Bytes catchupFrame(const json& m) const { return frame(json{{"t", "cu"}, {"m", m}}, "cu-" + hex(randomBytes(12))); }
